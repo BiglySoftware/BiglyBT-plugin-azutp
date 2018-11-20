@@ -29,12 +29,9 @@ import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
 
-import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
-import com.biglybt.core.logging.Logger;
 import com.biglybt.core.util.Debug;
 
-import com.biglybt.core.networkmanager.Transport.ConnectListener;
 import com.biglybt.core.networkmanager.impl.TransportHelper;
 
 
@@ -48,10 +45,12 @@ UTPTransportHelper
 	public static final int READ_TIMEOUT		= 30*1000;
 	public static final int CONNECT_TIMEOUT		= 20*1000;
 	
-	private UTPConnectionManager	manager;
-	private UTPSelector				selector;
+	final private UTPConnectionManager	manager;
+	final private UTPSelector			selector;
 	
-	private InetSocketAddress		address;
+	final private InetSocketAddress		address;
+	final private int					local_port;
+	
 	private UTPTransport			transport;
 	
 	private boolean					incoming;
@@ -77,12 +76,14 @@ UTPTransportHelper
 	public
 	UTPTransportHelper(
 		UTPConnectionManager	_manager,
+		int						_local_port,
 		InetSocketAddress		_address,
 		UTPTransport			_transport )
 	
 		throws IOException
 	{
 		manager		= _manager;
+		local_port	= _local_port;
 		address 	= _address;
 		transport	= _transport;
 		
@@ -96,12 +97,14 @@ UTPTransportHelper
 	public
 	UTPTransportHelper(
 		UTPConnectionManager	_manager,
+		int						_local_port,
 		InetSocketAddress		_address, 
 		UTPConnection			_connection )
 	{
 			// incoming
 			
 		manager		= _manager;
+		local_port	= _local_port;
 		address 	= _address;
 		connection 	= _connection;
 	
@@ -109,6 +112,12 @@ UTPTransportHelper
 		incoming	= true;
 		
 		selector	= connection.getSelector();
+	}
+	
+	protected int
+	getLocalPort()
+	{
+		return( local_port );
 	}
 	
 	protected void

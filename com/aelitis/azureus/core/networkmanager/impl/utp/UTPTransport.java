@@ -185,8 +185,10 @@ UTPTransport
 		
 		UTPTransportHelper helper = null;
 		
+		Number local_port = (Number)listener.getConnectionProperty( "local_port" );
+		
 		try{
-			helper = new UTPTransportHelper( manager, endpoint.getAddress(), this );
+			helper = new UTPTransportHelper( manager, local_port==null?0:local_port.intValue(), endpoint.getAddress(), this );
 		
 			final UTPTransportHelper f_helper = helper;
 			

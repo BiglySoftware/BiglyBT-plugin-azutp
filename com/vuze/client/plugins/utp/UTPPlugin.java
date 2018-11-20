@@ -25,6 +25,8 @@ package com.vuze.client.plugins.utp;
 
 import java.net.DatagramPacket;
 import java.net.InetSocketAddress;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnectionManager;
 import com.biglybt.core.config.COConfigurationManager;
@@ -47,7 +49,7 @@ import com.biglybt.plugin.upnp.UPnPPlugin;
 
 public class 
 UTPPlugin
-	implements Plugin, PRUDPPrimordialHandler
+	implements Plugin
 {
 	private PluginInterface		plugin_interface;
 
@@ -55,12 +57,12 @@ UTPPlugin
 	private LoggerChannel		log;
 
 	private BooleanParameter	enabled_param;
-	
-	private UPnPMapping upnp_mapping;
-
-	private PRUDPPacketHandler handler;
-
+		
 	private UTPConnectionManager manager;
+	
+	private Handler				default_handler = new Handler();
+
+	private Map<Integer, Handler>	extra_handlers = new ConcurrentHashMap<>();
 	
 	
 	public void 
@@ -177,15 +179,23 @@ UTPPlugin
 					public void
 					initializationComplete()
 					{
-						paramListener = new ParameterListener() {
+						paramListener = 
+							new ParameterListener() {
+							
 							public void
 							parameterChanged(
-									String name) {
+								String name ) 
+							{
 								checkEnabledState();
 							}
 						};
-						COConfigurationManager.addWeakParameterListener(paramListener, true,
-								"TCP.Listen.Port", "TCP.Listen.Port.Enable");
+						
+						COConfigurationManager.addWeakParameterListener(
+							paramListener, 
+							true,
+							"TCP.Listen.Port", 
+							"TCP.Listen.Port.Enable", 
+							"TCP.Listen.AdditionalPorts" );
 					}
 										
 					public void
@@ -216,13 +226,126 @@ UTPPlugin
 		if ( tcp_enabled && plugin_enabled ){
 			
 			log( "Plugin is enabled: version=" + plugin_interface.getPluginVersion());
+									
+			int	port = COConfigurationManager.getIntParameter( "TCP.Listen.Port" );				
+
+			if ( default_handler.getPort() != port ){
+			
+				default_handler.setPort( port );
+			}
+			
+			List<Long> extra = (List<Long>)COConfigurationManager.getListParameter( "TCP.Listen.AdditionalPorts", new ArrayList<>());
+			
+			for ( Long l_p: extra ){
+				
+				int	p = l_p.intValue();
+				
+				if ( !extra_handlers.containsKey( p )){
+					
+					Handler h = new Handler();
+					
+					h.setPort( p );
+					
+					extra_handlers.put( p, h );
+				}
+			}
+			
+			manager.activate();
+			
+		}else{
+			
+			log( "Plugin is disabled" );
+			
+			default_handler.clear();
+			
+			for ( Handler h: extra_handlers.values()){
+				
+				h.clear();
+			}
+			
+			extra_handlers.clear();
+		}
+	}
+	
+	public boolean
+	send(
+		int					local_port,
+		InetSocketAddress	to,
+		byte[]				buffer,
+		int					length )
+	{
+		if ( length != buffer.length ){
+			
+			Debug.out( "optimise this" );
+			
+			byte[] temp = new byte[length];
+			
+			System.arraycopy(buffer, 0, temp, 0, length );
+			
+			buffer = temp;
+		}
+		
+		if ( local_port == default_handler.getPort() || local_port == 0 ){
+		
+			return( default_handler.send( to, buffer ));
+			
+		}else{
+			
+			Handler handler = extra_handlers.get( local_port );
+			
+			if ( handler == null ){
+				
+				return( default_handler.send( to, buffer ));
+				
+			}else{
+				
+				return( handler.send( to, buffer ));
+			}
+		}
+	}
+	
+	public void
+	log(
+		String		str )
+	{
+		if ( logging_enabled ){
+		
+			log.log( str );
+		}
+	}
+	
+	public void
+	log(
+		String		str,
+		Throwable 	e )
+	{		
+		log.log( str, e );
+		
+		Debug.out( e );
+	}
+	
+	private class
+	Handler
+	{
+		int						port;
+		
+		PRUDPPacketHandler 		handler;
+		PRUDPPrimordialHandler	handler_handler;
+
+		UPnPMapping upnp_mapping;
+		
+		void
+		setPort(
+			int		_port )
+		{
+			port	= _port;
 			
 			if ( upnp_mapping != null ){
 				
 				upnp_mapping.destroy();
+				
+				upnp_mapping = null;
 			}
-			
-			int	port = COConfigurationManager.getIntParameter( "TCP.Listen.Port" );				
 
 			PluginInterface pi_upnp = plugin_interface.getPluginManager().getPluginInterfaceByClass( UPnPPlugin.class );
 			
@@ -246,23 +369,54 @@ UTPPlugin
 				
 				if ( handler != null ){
 					
-					handler.removePrimordialHandler( UTPPlugin.this );
+					handler.removePrimordialHandler( handler_handler );
 				}
 					
 				handler = PRUDPPacketHandlerFactory.getHandler( port );
 				
-				handler.addPrimordialHandler( UTPPlugin.this );				
+				handler_handler = 
+					new PRUDPPrimordialHandler()
+					{
+						public boolean
+						packetReceived(
+							DatagramPacket	packet )
+						{
+							return( manager.receive( port, (InetSocketAddress)packet.getSocketAddress(), packet.getData(), packet.getLength()));
+						}
+					};
+				
+				handler.addPrimordialHandler( handler_handler );		
 			}
-			
-			manager.activate( handler );
-			
-		}else{
-			
-			log( "Plugin is disabled" );
-			
+		}
+		
+		int
+		getPort()
+		{
+			return( port );
+		}
+		
+		boolean
+		send(
+			InetSocketAddress		to,
+			byte[]					buffer )
+		{
+			try{
+				handler.primordialSend( buffer, to );
+				
+				return( true );
+				
+			}catch( Throwable e ){
+				
+				return( false );
+			}
+		}
+		
+		void
+		clear()
+		{
 			if ( handler != null ){
 				
-				handler.removePrimordialHandler( UTPPlugin.this  );
+				handler.removePrimordialHandler( handler_handler  );
 				
 				handler = null;
 			}
@@ -274,62 +428,7 @@ UTPPlugin
 				upnp_mapping = null;
 			}
 			
-			manager.deactivate();
+			port = 0;
 		}
-	}
-	
-	public boolean
-	packetReceived(
-		DatagramPacket	packet )
-	{
-		return( manager.receive((InetSocketAddress)packet.getSocketAddress(), packet.getData(), packet.getLength()));
-	}
-	
-	public boolean
-	send(
-		InetSocketAddress	to,
-		byte[]				buffer,
-		int					length )
-	{
-		if ( length != buffer.length ){
-			
-			Debug.out( "optimise this" );
-			
-			byte[] temp = new byte[length];
-			
-			System.arraycopy(buffer, 0, temp, 0, length );
-			
-			buffer = temp;
-		}
-		
-		try{
-			handler.primordialSend( buffer, to );
-			
-		}catch( Throwable e ){
-			
-			return( false );
-		}
-
-		return( true );
-	}
-	
-	public void
-	log(
-		String		str )
-	{
-		if ( logging_enabled ){
-		
-			log.log( str );
-		}
-	}
-	
-	public void
-	log(
-		String		str,
-		Throwable 	e )
-	{		
-		log.log( str, e );
-		
-		Debug.out( e );
 	}
 }

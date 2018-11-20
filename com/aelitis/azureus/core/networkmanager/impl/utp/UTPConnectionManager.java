@@ -52,7 +52,7 @@ import com.biglybt.core.networkmanager.impl.IncomingConnectionManager;
 import com.biglybt.core.networkmanager.impl.ProtocolDecoder;
 import com.biglybt.core.networkmanager.impl.TransportCryptoManager;
 import com.biglybt.core.networkmanager.impl.TransportHelperFilter;
-import com.biglybt.net.udp.uc.PRUDPPacketHandler;
+
 import com.vuze.client.plugins.utp.UTPPlugin;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
@@ -76,8 +76,6 @@ UTPConnectionManager
 	private boolean		initialised;
 	
 	private UTPPlugin				plugin;
-	private PRUDPPacketHandler		packet_handler;
-	private int						local_port;
 	
 	private IncomingConnectionManager	incoming_manager = IncomingConnectionManager.getSingleton();
 
@@ -107,11 +105,13 @@ UTPConnectionManager
 	private long				total_incoming_queued;
 	private int					total_incoming_queued_log_state;
 	
-	private boolean	available;
+	private int					current_local_port;
 	
-	private boolean	hack_worked;
-	private long	last_hack_attempt;
-	private Object	last_hack;
+	private boolean	available;
+		
+	//private boolean	hack_worked;
+	//private long	last_hack_attempt;
+	//private Object	last_hack;
 	
 	private boolean	prefer_utp;
 	
@@ -135,12 +135,8 @@ UTPConnectionManager
 	}
 	
 	public void
-	activate(
-		PRUDPPacketHandler		_handler )
+	activate()
 	{
-		packet_handler		= _handler;
-		local_port			= packet_handler.getPort();
-		
 		synchronized( this){
 			
 			if ( initialised ){
@@ -217,7 +213,7 @@ UTPConnectionManager
 						{
 							init_sem.reserve();
 							
-							accept( new InetSocketAddress( host, port),	utp_socket, con_id );
+							accept( current_local_port, new InetSocketAddress( host, port),	utp_socket, con_id );
 						}
 						
 						public void
@@ -228,7 +224,7 @@ UTPConnectionManager
 						{
 							init_sem.reserve();
 							
-							accept( adress,	utp_socket, con_id );
+							accept( current_local_port, adress,	utp_socket, con_id );
 						}
 						
 						public boolean
@@ -238,7 +234,7 @@ UTPConnectionManager
 							byte[]		buffer,
 							int			length )
 						{
-							return( plugin.send( new InetSocketAddress( address, port ), buffer, length ));
+							return( plugin.send( current_local_port, new InetSocketAddress( address, port ), buffer, length ));
 						}
 						
 						public boolean
@@ -247,8 +243,9 @@ UTPConnectionManager
 							byte[]				buffer,
 							int					length )
 						{
-							return( plugin.send( adress, buffer, length ));
+							return( plugin.send( current_local_port, adress, buffer, length ));
 						}
+						
 						public void
 						read(
 							long		utp_socket,
@@ -484,7 +481,7 @@ UTPConnectionManager
 			
 			if ( available ){
 			
-				hackHandler();
+				// hackHandler( packet_handler );
 				
 				selector = new UTPSelector( this );
 				
@@ -495,13 +492,7 @@ UTPConnectionManager
 			init_sem.releaseForever();
 		}
 	}
-	
-	public void
-	deactivate()
-	{
-		// TODO:
-	}
-	
+		
 	public UTPConnection
 	connect(
 		final InetSocketAddress		target,
@@ -524,6 +515,8 @@ UTPConnectionManager
 					public void
 					runSupport()
 				  	{
+						current_local_port = transport.getLocalPort();
+						
 						try{
 							long[] x = utp_provider.connect( target.getAddress().getHostAddress(), target.getPort());
 						
@@ -566,6 +559,7 @@ UTPConnectionManager
 	
 	public boolean
 	receive(
+		int						local_port,
 		InetSocketAddress		from,
 		byte[]					data,
 		int						length )
@@ -609,7 +603,7 @@ UTPConnectionManager
 									
 					// System.out.println( "Looks like uTP incoming connection from " + from );
 	
-					return( doReceive( address.getHostAddress(), from.getPort(), data, length ));
+					return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
 											
 				}else if ( (first_byte&0x0f)==0x01 ){
 					
@@ -677,7 +671,7 @@ UTPConnectionManager
 							
 							// System.out.println( "Looks like uTP incoming data from " + from );
 								
-							return( doReceive( address.getHostAddress(), from.getPort(), data, length ));
+							return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
 								
 						}else{
 							
@@ -693,6 +687,7 @@ UTPConnectionManager
 	
 	private boolean
 	doReceive(
+		final int 			local_port,
 		final String		from_address,
 		final int			from_port,
 		final byte[]		data,
@@ -736,6 +731,8 @@ UTPConnectionManager
 				public void
 				runSupport()
 			  	{
+					current_local_port = local_port;
+					
 					synchronized( UTPConnectionManager.this ){
 						
 						total_incoming_queued -= length;
@@ -763,13 +760,14 @@ UTPConnectionManager
 	
 	private void
 	accept(
+		int						local_port,
 		final InetSocketAddress	remote_address,
 		long					utp_socket,
 		long					con_id )
 	{		
 		final UTPConnection	new_connection = addConnection( remote_address, null, utp_socket, con_id );
 		
-		final UTPTransportHelper	helper = new UTPTransportHelper( this, remote_address, new_connection );
+		final UTPTransportHelper	helper = new UTPTransportHelper( this, local_port, remote_address, new_connection );
 
 		if ( !UTPNetworkManager.UTP_INCOMING_ENABLED ){
 			
@@ -995,12 +993,14 @@ UTPConnectionManager
 		AESemaphore		wait_sem,
 		long			now )
 	{
+		/*
 		if ( hack_worked && now - last_hack_attempt > 60*1000 ){
 			
 			last_hack_attempt = now;
-			
+						
 			hackHandler();
 		}
+		*/
 		
 		dispatcher.dispatch(
 			new AERunnable()
@@ -1326,9 +1326,10 @@ UTPConnectionManager
 		plugin.log( str );
 	}
 	
-	
+	/* no longer works as non-native impl
 	private void
-	hackHandler()
+	hackHandler(
+		PRUDPPacketHandler		packet_handler )
 	{
 		try{
 			Class cla = packet_handler.getClass();
@@ -1399,4 +1400,5 @@ UTPConnectionManager
 			log( "Failed to set socket options: " + Debug.getNestedExceptionMessage(e));
 		}
 	}
+	*/
 }

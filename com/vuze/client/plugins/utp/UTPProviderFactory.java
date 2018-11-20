@@ -33,8 +33,5 @@ UTPProviderFactory
 	createProvider()
 	{
 		return( new UTPProviderLocal());
-		
-		//return( new UTPProviderTester( new UTPProviderLocal( true )));
-		//return( new UTPProviderTester( new UTPProviderNative( true )));
 	}
 }

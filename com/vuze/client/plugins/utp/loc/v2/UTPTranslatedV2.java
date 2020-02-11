@@ -24,10 +24,12 @@
 package com.vuze.client.plugins.utp.loc.v2;
 
 import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.biglybt.core.util.AddressUtils;
 import com.biglybt.core.util.Debug;
 
 import com.vuze.client.plugins.utp.UTPProvider;
@@ -574,10 +576,12 @@ UTPTranslatedV2
 				switch( args.callback_type ){
 				
 					case UTP_GET_UDP_MTU:{
-						return(( args.address.getAddress() instanceof Inet6Address ) ? UDP_TEREDO_MTU : UDP_IPV4_MTU );
+						InetAddress addr = args.address.getAddress();
+						return(( addr instanceof Inet6Address ) ? ( AddressUtils.isTeredo(addr)?UDP_TEREDO_MTU:UDP_IPV6_MTU) : UDP_IPV4_MTU );
 					}
 					case UTP_GET_UDP_OVERHEAD:{
-						return((args.address.getAddress() instanceof Inet6Address ) ? UDP_TEREDO_OVERHEAD : UDP_IPV4_OVERHEAD );
+						InetAddress addr = args.address.getAddress();
+						return((addr instanceof Inet6Address ) ? ( AddressUtils.isTeredo(addr)?UDP_TEREDO_OVERHEAD:UDP_IPV6_OVERHEAD) : UDP_IPV4_OVERHEAD );
 					}
 					case UTP_GET_MILLISECONDS:{
 						return( callback.getMilliseconds());

@@ -570,113 +570,110 @@ UTPConnectionManager
 		}
 		
 		InetAddress address = from.getAddress();
-		
-		if ( address instanceof Inet4Address ){
+					
+		if ( length >= 20 ){
 			
-			if ( length >= 20 ){
+			byte first_byte = data[0];
+
+			// System.out.println( "UDP: " + ByteFormatter.encodeString( data, 0, length ) + " from " + from  + " - " + new String( data, 0, length ));
+
+			if ( 	first_byte == 0x41 &&		// SYN + version 1 
+					data[8] == 0 && data[9] == 0 && data[10] == 0 && data[11] == 0 &&	// time diff = 0 
+					// data[16] == 0 && data[17] == 1 ){	// seq = 1
+					data[18] == 0 && data[19] == 0 ){	// ack = 0
 				
-				byte first_byte = data[0];
-
-				// System.out.println( "UDP: " + ByteFormatter.encodeString( data, 0, length ) + " from " + from  + " - " + new String( data, 0, length ));
-
-				if ( 	first_byte == 0x41 &&		// SYN + version 1 
-						data[8] == 0 && data[9] == 0 && data[10] == 0 && data[11] == 0 &&	// time diff = 0 
-						// data[16] == 0 && data[17] == 1 ){	// seq = 1
-						data[18] == 0 && data[19] == 0 ){	// ack = 0
-					
-					/* 4102C5F60499238B00000000003800000001000000080000000000000000
-						4102 CDF2 	// SYN, ver 1, ext 2, con id CDF2
-						6A39693A	// usec
-						00000000	// rep micro
-						00380000	wnd = 3.5MB
-						00010000	seq = 1, ack = 0
-		
-						00080000	ext len = 8, no more ext
-						00000000
-						0000
-					*/
-
-						// then modified to use random initial sequence number
-					
-					// 4102e5331fb2e61900000000003800003aee000000080000000000000000
-
-									
-					// System.out.println( "Looks like uTP incoming connection from " + from );
+				/* 4102C5F60499238B00000000003800000001000000080000000000000000
+					4102 CDF2 	// SYN, ver 1, ext 2, con id CDF2
+					6A39693A	// usec
+					00000000	// rep micro
+					00380000	wnd = 3.5MB
+					00010000	seq = 1, ack = 0
 	
-					return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
-											
-				}else if ( (first_byte&0x0f)==0x01 ){
-					
-					/* 0100B5621AE099301AD4C472003800000002482213426974546F7272656E742070726F746F636F6C0000000000100005A
-						0100		// (x+1) + ext type
-						B562		// con id
-						1AE09930	// usec
-						1AD4C472	// rep micro
-						00380000	// recv win bytes
-						0002		// seq
-						4822		// ack
-						13426974546F7272656E742070726F746F636F6C0000000000100005A
-					*/
-					
-					// 210063CB1EFC51C01BA91F010003200036B56BFD
-					
-					int type = (data[0]>>>4)&0x0f;
-					
-					if ( type >= 0 && type <= 4 ){
-						
-						int	con_id = ((data[2]<<8)&0xff00) | (data[3]&0x00ff);
-					
-						UTPConnection connection = null;
-						
-						synchronized( this ){
-							
-							List<UTPConnection> l = address_connection_map.get( address );
-							
-							if ( l != null ){
+					00080000	ext len = 8, no more ext
+					00000000
+					0000
+				*/
+
+					// then modified to use random initial sequence number
+				
+				// 4102e5331fb2e61900000000003800003aee000000080000000000000000
+
 								
-								for ( UTPConnection c:l ){
+				// System.out.println( "Looks like uTP incoming connection from " + from );
+
+				return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
+										
+			}else if ( (first_byte&0x0f)==0x01 ){
+				
+				/* 0100B5621AE099301AD4C472003800000002482213426974546F7272656E742070726F746F636F6C0000000000100005A
+					0100		// (x+1) + ext type
+					B562		// con id
+					1AE09930	// usec
+					1AD4C472	// rep micro
+					00380000	// recv win bytes
+					0002		// seq
+					4822		// ack
+					13426974546F7272656E742070726F746F636F6C0000000000100005A
+				*/
+				
+				// 210063CB1EFC51C01BA91F010003200036B56BFD
+				
+				int type = (data[0]>>>4)&0x0f;
+				
+				if ( type >= 0 && type <= 4 ){
+					
+					int	con_id = ((data[2]<<8)&0xff00) | (data[3]&0x00ff);
+				
+					UTPConnection connection = null;
+					
+					synchronized( this ){
+						
+						List<UTPConnection> l = address_connection_map.get( address );
+						
+						if ( l != null ){
+							
+							for ( UTPConnection c:l ){
+								
+								if ( c.getConnectionID() == con_id ){
 									
-									if ( c.getConnectionID() == con_id ){
-										
-										connection = c;
-										
-										break;
-									}
+									connection = c;
+									
+									break;
 								}
 							}
-							
-							/*
-							if ( connection == null ){
-								
-								String existing = "";
-								
-								for ( Map.Entry<InetAddress, List<UTPConnection>> entry: address_connection_map.entrySet()){
-									
-									String str = entry.getKey() + "->";
-									
-									for (UTPConnection u: entry.getValue()){
-										
-										str += u.getConnectionID() + ",";
-									}
-									
-									existing += str + " ";
-								}
-								
-								System.out.println( "Connection not found for " + from + "/" + con_id + ": " + existing );
-							}
-							*/
 						}
 						
-						if ( connection != null ){
+						/*
+						if ( connection == null ){
 							
-							// System.out.println( "Looks like uTP incoming data from " + from );
-								
-							return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
-								
-						}else{
+							String existing = "";
 							
-							// System.out.println( "No match from " + from  + ": " + ByteFormatter.encodeString( data, 0, length ));
+							for ( Map.Entry<InetAddress, List<UTPConnection>> entry: address_connection_map.entrySet()){
+								
+								String str = entry.getKey() + "->";
+								
+								for (UTPConnection u: entry.getValue()){
+									
+									str += u.getConnectionID() + ",";
+								}
+								
+								existing += str + " ";
+							}
+							
+							System.out.println( "Connection not found for " + from + "/" + con_id + ": " + existing );
 						}
+						*/
+					}
+					
+					if ( connection != null ){
+						
+						// System.out.println( "Looks like uTP incoming data from " + from );
+							
+						return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
+							
+					}else{
+						
+						// System.out.println( "No match from " + from  + ": " + ByteFormatter.encodeString( data, 0, length ));
 					}
 				}
 			}

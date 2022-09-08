@@ -376,15 +376,6 @@ UTPConnection
 		return( close_time );
 	}
 	
-	protected void
-	poll()
-	{
-		if ( transport != null ){
-			
-			transport.poll();
-		}
-	}
-	
 	protected String
 	getState()
 	{

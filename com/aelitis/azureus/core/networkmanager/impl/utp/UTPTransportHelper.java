@@ -668,17 +668,6 @@ UTPTransportHelper
     		connection.closeSupport( reason );
     	}
     }
-    
-	protected void
-	poll()
-	{
-	   	synchronized( this ){
-	   		
-	   		fireReadSelect();
-	   		
-	   		fireWriteSelect();
-	   	}
-	}
 	
 	public synchronized void
 	setUserData(

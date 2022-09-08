@@ -39,8 +39,8 @@ UTPSelector
 	
 	private AEThread2	thread;
 	
-	private List<Object[]>	ready_set	= new LinkedList<Object[]>();
-	private AESemaphore		ready_sem	= new AESemaphore( "UTPSelector" );
+	private LinkedList<Object[]>	ready_set	= new LinkedList<Object[]>();
+	private AESemaphore				ready_sem	= new AESemaphore( "UTPSelector" );
 	
 	private volatile boolean destroyed;
 	
@@ -88,12 +88,12 @@ UTPSelector
 							
 							synchronized( ready_set ){
 								
-								if ( ready_set.size() == 0 ){
+								if ( ready_set.isEmpty()){
 																		
 									continue;
 								}
 								
-								entry = ready_set.remove(0);
+								entry = ready_set.removeFirst();
 							}
 							
 						
@@ -160,23 +160,26 @@ UTPSelector
 				throw( new RuntimeException( "Selector has been destroyed" ));
 			}
 			
-			Iterator<Object[]>	it = ready_set.iterator();
-			
-			while( it.hasNext()){
-			
-				Object[]	entry = (Object[])it.next();
+			if ( !ready_set.isEmpty()){
 				
-				if ( entry[1] == listener ){
+				Iterator<Object[]>	it = ready_set.iterator();
+				
+				while( it.hasNext()){
+				
+					Object[]	entry = (Object[])it.next();
 					
-					it.remove();
-					
-					removed	= true;
-					
-					break;
+					if ( entry[1] == listener ){
+						
+						it.remove();
+						
+						removed	= true;
+						
+						break;
+					}
 				}
 			}
 			
-			ready_set.add( new Object[]{ transport, listener, attachment });
+			ready_set.addLast( new Object[]{ transport, listener, attachment });
 		}
 		
 		if ( !removed ){
@@ -203,23 +206,26 @@ UTPSelector
 				throw( new RuntimeException( "Selector has been destroyed" ));
 			}
 		
-			Iterator	it = ready_set.iterator();
-			
-			while( it.hasNext()){
-			
-				Object[]	entry = (Object[])it.next();
+			if ( !ready_set.isEmpty()){
 				
-				if ( entry[1] == listener ){
+				Iterator<Object[]>	it = ready_set.iterator();
+				
+				while( it.hasNext()){
+				
+					Object[]	entry = it.next();
 					
-					it.remove();
-					
-					removed	= true;
-					
-					break;
+					if ( entry[1] == listener ){
+						
+						it.remove();
+						
+						removed	= true;
+						
+						break;
+					}
 				}
 			}
 			
-			ready_set.add( new Object[]{ transport, listener, attachment, error });
+			ready_set.addLast( new Object[]{ transport, listener, attachment, error });
 		}
 		
 		if ( !removed ){
@@ -235,17 +241,20 @@ UTPSelector
 	{
 		synchronized( ready_set ){
 		
-			Iterator	it = ready_set.iterator();
-			
-			while( it.hasNext()){
-			
-				Object[]	entry = (Object[])it.next();
+			if ( !ready_set.isEmpty()){
 				
-				if ( entry[0] == transport && entry[1] == listener ){
+				Iterator<Object[]>	it = ready_set.iterator();
+				
+				while( it.hasNext()){
+				
+					Object[]	entry = it.next();
 					
-					it.remove();
-										
-					break;
+					if ( entry[0] == transport && entry[1] == listener ){
+						
+						it.remove();
+											
+						break;
+					}
 				}
 			}
 		}

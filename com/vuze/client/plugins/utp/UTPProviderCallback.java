@@ -46,6 +46,9 @@ UTPProviderCallback
 		String		str,
 		Throwable	error );
 	
+	public void
+	checkThread();
+	
 	public int
 	getRandom();
 	
@@ -80,11 +83,6 @@ UTPProviderCallback
 		InetSocketAddress	address,
 		byte[]				buffer,
 		int					length );
-	
-	public void
-	read(
-		long		utp_socket,
-		byte[]		data );
 	
 	public void
 	read(

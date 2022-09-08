@@ -24,10 +24,10 @@
 package com.aelitis.azureus.core.networkmanager.impl.utp;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.io.File;
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
@@ -41,6 +41,7 @@ import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.AsyncDispatcher;
 import com.biglybt.core.util.ByteFormatter;
 import com.biglybt.core.util.Constants;
+import com.biglybt.core.util.CopyOnWriteList;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.SystemTime;
 import com.biglybt.pif.PluginInterface;
@@ -79,13 +80,19 @@ UTPConnectionManager
 	
 	private IncomingConnectionManager	incoming_manager = IncomingConnectionManager.getSingleton();
 
-	private AsyncDispatcher	dispatcher = new AsyncDispatcher();
+		// we don't want the dispatch thead to terminate on idle as we rely on all dispatcher
+		// invocations being strictly single-threaded to avoid locking etc
+	
+	private AsyncDispatcher	dispatcher = new AsyncDispatcher( "uTP:CM", Integer.MAX_VALUE );
 	
 	private UTPSelector		selector;
 	
 	private List<UTPConnection>							connections 			= new ArrayList<UTPConnection>();
-	private Map<InetAddress,List<UTPConnection>>		address_connection_map 	= new HashMap<InetAddress, List<UTPConnection>>();
-	private Map<Long,UTPConnection>						socket_connection_map 	= new HashMap<Long, UTPConnection>();
+	private volatile int								connection_count;
+	
+	private Map<InetAddress,CopyOnWriteList<UTPConnection>>		address_connection_map 	= new ConcurrentHashMap<InetAddress, CopyOnWriteList<UTPConnection>>();
+	
+	private Map<Long,UTPConnection>								socket_connection_map 	= new HashMap<Long, UTPConnection>();
 	
 	private Set<UTPConnection>							closing_connections		= new HashSet<UTPConnection>();
 	
@@ -102,17 +109,13 @@ UTPConnectionManager
 	public static final int	DEFAULT_RECV_BUFFER_KB		= UTPProvider.DEFAULT_RECV_BUFFER_KB;
 	public static final int	DEFAULT_SEND_BUFFER_KB		= UTPProvider.DEFAULT_SEND_BUFFER_KB;
 	
-	private long				total_incoming_queued;
-	private int					total_incoming_queued_log_state;
+	private AtomicLong			total_incoming_queued = new AtomicLong();
+	private volatile int		total_incoming_queued_log_state;
 	
 	private int					current_local_port;
 	
 	private boolean	available;
 		
-	//private boolean	hack_worked;
-	//private long	last_hack_attempt;
-	//private Object	last_hack;
-	
 	private boolean	prefer_utp;
 	
 	private UTPProvider	utp_provider = UTPProviderFactory.createProvider();
@@ -134,6 +137,14 @@ UTPConnectionManager
 		return( utp_provider.getVersion());
 	}
 	
+	private void
+	checkThread()
+	{
+		if ( !dispatcher.isDispatchThread()){
+			
+			Debug.out( "eh" );
+		}
+	}
 	public void
 	activate()
 	{
@@ -186,6 +197,15 @@ UTPConnectionManager
 							plugin.log(str,error);
 						}
 						
+						@Override
+						public void 
+						checkThread()
+						{
+							if ( Constants.IS_CVS_VERSION ){
+								UTPConnectionManager.this.checkThread();
+							}
+						}
+						
 						public int
 						getRandom()
 						{
@@ -211,6 +231,10 @@ UTPConnectionManager
 							long		utp_socket,
 							long		con_id )
 						{
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
+							}
+							
 							init_sem.reserve();
 							
 							accept( current_local_port, new InetSocketAddress( host, port),	utp_socket, con_id );
@@ -222,6 +246,10 @@ UTPConnectionManager
 							long				utp_socket,
 							long				con_id )
 						{
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
+							}
+							
 							init_sem.reserve();
 							
 							accept( current_local_port, adress,	utp_socket, con_id );
@@ -234,6 +262,10 @@ UTPConnectionManager
 							byte[]		buffer,
 							int			length )
 						{
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
+							}
+
 							return( plugin.send( current_local_port, new InetSocketAddress( address, port ), buffer, length ));
 						}
 						
@@ -243,35 +275,11 @@ UTPConnectionManager
 							byte[]				buffer,
 							int					length )
 						{
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
+							}
+							
 							return( plugin.send( current_local_port, adress, buffer, length ));
-						}
-						
-						public void
-						read(
-							long		utp_socket,
-							byte[]		data )
-						{
-							UTPConnection connection;
-							
-							synchronized( UTPConnectionManager.this ){
-								
-								connection = socket_connection_map.get( utp_socket );
-							}
-							
-							if ( connection == null ){
-								
-								Debug.out( "read: unknown socket!" );
-								
-							}else{
-								
-								try{
-									connection.receive( ByteBuffer.wrap( data ));
-									
-								}catch( Throwable e ){
-																	
-									connection.close( Debug.getNestedExceptionMessage(e));
-								}
-							}
 						}
 						
 						public void
@@ -279,12 +287,11 @@ UTPConnectionManager
 							long			utp_socket,
 							ByteBuffer		bb )
 						{
-							UTPConnection connection;
-							
-							synchronized( UTPConnectionManager.this ){
-								
-								connection = socket_connection_map.get( utp_socket );
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
 							}
+
+							UTPConnection connection = socket_connection_map.get( utp_socket );
 							
 							if ( connection == null ){
 								
@@ -309,12 +316,11 @@ UTPConnectionManager
 							int			offset,
 							int			length )
 						{
-							UTPConnection connection;
-							
-							synchronized( UTPConnectionManager.this ){
-								
-								connection = socket_connection_map.get( utp_socket );
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
 							}
+
+							UTPConnection connection = socket_connection_map.get( utp_socket );
 							
 							if ( connection == null ){
 								
@@ -368,12 +374,13 @@ UTPConnectionManager
 						getReadBufferSize(
 							long		utp_socket )
 						{
-							UTPConnection connection;
-							
-							synchronized( UTPConnectionManager.this ){
-								
-								connection = socket_connection_map.get( utp_socket );
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
 							}
+
+							UTPConnection connection;
+															
+							connection = socket_connection_map.get( utp_socket );
 							
 							if ( connection == null ){
 								
@@ -406,12 +413,11 @@ UTPConnectionManager
 							long		utp_socket,
 							int			state )
 						{
-							UTPConnection connection;
-							
-							synchronized( UTPConnectionManager.this ){
-								
-								connection = socket_connection_map.get( utp_socket );
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
 							}
+
+							UTPConnection connection = socket_connection_map.get( utp_socket );
 							
 							if ( connection == null ){
 								
@@ -437,7 +443,7 @@ UTPConnectionManager
 									connection.setUnusable();
 									
 									connection.close( "Connection destroyed" );
-									
+																		
 									if ( closing_connections.remove( connection )){
 										
 										removeConnection( connection );
@@ -450,13 +456,12 @@ UTPConnectionManager
 						error(
 							long		utp_socket,
 							int			error )
-						{		
-							UTPConnection connection;
-							
-							synchronized( UTPConnectionManager.this ){
-								
-								connection = socket_connection_map.get( utp_socket );
+						{	
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
 							}
+
+							UTPConnection connection = socket_connection_map.get( utp_socket );
 							
 							if ( connection == null ){
 								
@@ -480,9 +485,7 @@ UTPConnectionManager
 					});
 			
 			if ( available ){
-			
-				// hackHandler( packet_handler );
-				
+							
 				selector = new UTPSelector( this );
 				
 				ProtocolEndpointUTP.register( this );
@@ -625,45 +628,42 @@ UTPConnectionManager
 					int	con_id = ((data[2]<<8)&0xff00) | (data[3]&0x00ff);
 				
 					UTPConnection connection = null;
+											
+					CopyOnWriteList<UTPConnection> l = address_connection_map.get( address );
 					
-					synchronized( this ){
+					if ( l != null ){
 						
-						List<UTPConnection> l = address_connection_map.get( address );
-						
-						if ( l != null ){
+						for ( UTPConnection c:l ){
 							
-							for ( UTPConnection c:l ){
+							if ( c.getConnectionID() == con_id ){
 								
-								if ( c.getConnectionID() == con_id ){
-									
-									connection = c;
-									
-									break;
-								}
+								connection = c;
+								
+								break;
 							}
 						}
-						
-						/*
-						if ( connection == null ){
-							
-							String existing = "";
-							
-							for ( Map.Entry<InetAddress, List<UTPConnection>> entry: address_connection_map.entrySet()){
-								
-								String str = entry.getKey() + "->";
-								
-								for (UTPConnection u: entry.getValue()){
-									
-									str += u.getConnectionID() + ",";
-								}
-								
-								existing += str + " ";
-							}
-							
-							System.out.println( "Connection not found for " + from + "/" + con_id + ": " + existing );
-						}
-						*/
 					}
+					
+					/*
+					if ( connection == null ){
+						
+						String existing = "";
+						
+						for ( Map.Entry<InetAddress, List<UTPConnection>> entry: address_connection_map.entrySet()){
+							
+							String str = entry.getKey() + "->";
+							
+							for (UTPConnection u: entry.getValue()){
+								
+								str += u.getConnectionID() + ",";
+							}
+							
+							existing += str + " ";
+						}
+						
+						System.out.println( "Connection not found for " + from + "/" + con_id + ": " + existing );
+					}
+					*/
 					
 					if ( connection != null ){
 						
@@ -694,33 +694,30 @@ UTPConnectionManager
 			
 			return( false );
 		}
-		
-		synchronized( this ){
+					
+		if ( total_incoming_queued.get() > MAX_INCOMING_QUEUED ){
 			
-			if ( total_incoming_queued > MAX_INCOMING_QUEUED ){
+			if ( total_incoming_queued_log_state == 0 ){
 				
-				if ( total_incoming_queued_log_state == 0 ){
-					
-					Debug.out( "uTP pending packet queue too large, discarding..." );
-					
-					total_incoming_queued_log_state = 1;
-				}
+				Debug.out( "uTP pending packet queue too large, discarding..." );
 				
-				return( true );
+				total_incoming_queued_log_state = 1;
 			}
 			
-			if ( total_incoming_queued_log_state == 1 ){
-				
-				if ( total_incoming_queued < MAX_INCOMING_QUEUED_LOG_OK ){
-
-					Debug.out( "uTP pending packet queue emptied, processing..." );
-				
-					total_incoming_queued_log_state	= 0;
-				}
-			}
-			
-			total_incoming_queued += length;
+			return( true );
 		}
+		
+		if ( total_incoming_queued_log_state == 1 ){
+			
+			if ( total_incoming_queued.get() < MAX_INCOMING_QUEUED_LOG_OK ){
+
+				Debug.out( "uTP pending packet queue emptied, processing..." );
+			
+				total_incoming_queued_log_state	= 0;
+			}
+		}
+			
+		total_incoming_queued.addAndGet( length );
 		
 		dispatcher.dispatch(
 			new AERunnable()
@@ -729,11 +726,8 @@ UTPConnectionManager
 				runSupport()
 			  	{
 					current_local_port = local_port;
-					
-					synchronized( UTPConnectionManager.this ){
-						
-						total_incoming_queued -= length;
-					}
+											
+					total_incoming_queued.addAndGet( -length );
 					
 					//System.out.println( "recv " + from_address + ":" + from_port + " - " + ByteFormatter.encodeString( data, 0, length ));
 					
@@ -876,56 +870,61 @@ UTPConnectionManager
 		
 		final UTPConnection 	new_connection = new UTPConnection( this, remote_address, transport_helper, utp_socket, con_id );
 		  
-		synchronized( this ){
-		
-			List<UTPConnection> l = address_connection_map.get( remote_address.getAddress());
-			
-			if ( l != null ){
+		if ( Constants.IS_CVS_VERSION ){
+			checkThread();
+		}
 				
-				for ( UTPConnection c: l ){
+		CopyOnWriteList<UTPConnection> l = address_connection_map.get( remote_address.getAddress());
+			
+		if ( l != null ){
+			
+			for ( UTPConnection c: l ){
+				
+				if ( c.getConnectionID() == con_id ){
 					
-					if ( c.getConnectionID() == con_id ){
+					if ( to_destroy == null ){
 						
-						if ( to_destroy == null ){
-							
-							to_destroy = new ArrayList<UTPConnection>();
-						}
-						
-						to_destroy.add( c );
-						
-						l.remove( c );
-						
-						connections.remove( c );
-						
-						break;
+						to_destroy = new ArrayList<UTPConnection>();
 					}
-				}
-			}else{
-				
-				l = new ArrayList<UTPConnection>();
-				
-				address_connection_map.put( remote_address.getAddress(), l );
-			}
-			
-			l.add( new_connection );
-			
-			connections.add( new_connection );
-			
-			UTPConnection existing = socket_connection_map.put( utp_socket, new_connection );
-			
-			// System.out.println( "Add connection " + remote_address + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + socket_connection_map.size());
-
-			if ( existing != null ){
-				
-				Debug.out( "Existing socket found at same address!!!!" );
-				
-				if ( to_destroy == null ){
 					
-					to_destroy = new ArrayList<UTPConnection>();
+					to_destroy.add( c );
+					
+					l.remove( c );
+					
+					connections.remove( c );
+					
+					connection_count = connections.size();
+					
+					break;
 				}
-				
-				to_destroy.add( existing );
 			}
+		}else{
+			
+			l = new CopyOnWriteList<UTPConnection>();
+			
+			address_connection_map.put( remote_address.getAddress(), l );
+		}
+		
+		l.add( new_connection );
+		
+		connections.add( new_connection );
+		
+		connection_count = connections.size();
+		
+		UTPConnection existing = socket_connection_map.put( utp_socket, new_connection );
+		
+		// System.out.println( "Add connection " + remote_address + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + socket_connection_map.size());
+
+		if ( existing != null ){
+			
+			Debug.out( "Existing socket found at same address!!!!" );
+			
+			if ( to_destroy == null ){
+				
+				to_destroy = new ArrayList<UTPConnection>();
+			}
+			
+			to_destroy.add( existing );
 		}
 		
 		if ( to_destroy != null ){
@@ -951,32 +950,35 @@ UTPConnectionManager
 	private void
 	removeConnection(
 		UTPConnection		c )
-	{		
-		synchronized( this ){
-			
-			connections.remove( c );
-	
-			List<UTPConnection> l = address_connection_map.get( c.getRemoteAddress().getAddress());
-			
-			if ( l != null ){
-				
-				l.remove( c );
-				
-				if ( l.size() == 0 ){
-					
-					address_connection_map.remove( c.getRemoteAddress().getAddress());
-				}
-			}
-			
-			UTPConnection existing = socket_connection_map.get( c.getSocket());
-			
-			if ( existing == c ){
-				
-				socket_connection_map.remove( c.getSocket());
-			}
-			
-			// System.out.println( "Remove connection: " + c.getRemoteAddress() + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + socket_connection_map.size());
+	{	
+		if ( Constants.IS_CVS_VERSION ){
+			checkThread();
 		}
+		
+		connections.remove( c );
+
+		connection_count = connections.size();
+		
+		CopyOnWriteList<UTPConnection> l = address_connection_map.get( c.getRemoteAddress().getAddress());
+		
+		if ( l != null ){
+			
+			l.remove( c );
+			
+			if ( l.size() == 0 ){
+				
+				address_connection_map.remove( c.getRemoteAddress().getAddress());
+			}
+		}
+		
+		UTPConnection existing = socket_connection_map.get( c.getSocket());
+		
+		if ( existing == c ){
+			
+			socket_connection_map.remove( c.getSocket());
+		}
+		
+		// System.out.println( "Remove connection: " + c.getRemoteAddress() + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + socket_connection_map.size());
 	}
 	
 	protected UTPSelector
@@ -989,16 +991,7 @@ UTPConnectionManager
 	poll(
 		AESemaphore		wait_sem,
 		long			now )
-	{
-		/*
-		if ( hack_worked && now - last_hack_attempt > 60*1000 ){
-			
-			last_hack_attempt = now;
-						
-			hackHandler();
-		}
-		*/
-		
+	{		
 		dispatcher.dispatch(
 			new AERunnable()
 			{
@@ -1036,7 +1029,7 @@ UTPConnectionManager
 				}
 			});
 		
-		int result =  connections.size();
+		int result =  connection_count;
 		
 		if ( result == 0 ){
 			
@@ -1235,58 +1228,45 @@ UTPConnectionManager
 				public void
 				runSupport()
 				{
-					closeSupport( c, r );
-				}
-			});
-	}
-	
-	private void
-	closeSupport(
-		UTPConnection	c,
-		String			r )
-	{		
-		boolean	async_close = false;
+					boolean	async_close = false;
 		
-		try{
-			if ( !c.isUnusable()){
-				
-				log( "Closed connection to " + c.getRemoteAddress() + ": " + r + " (" + c.getState() + ")" );
-
-				try{
-					c.setUnusable();
-
-					utp_provider.close( c.getSocket() );
-					
-						// wait for the destroying callback
-					
-					async_close = true;
-					
-				}catch( Throwable e ){
-					
-					Debug.out( e );
-				}
-			}
-		}finally{
+					try{
+						if ( !c.isUnusable()){
+							
+							log( "Closed connection to " + c.getRemoteAddress() + ": " + r + " (" + c.getState() + ")" );
 			
-			if ( async_close ){
-
-				synchronized( closing_connections ){
-				
-					closing_connections.add( c );
-				}
-			}else{
-				
-				synchronized( closing_connections ){
-					
-					if ( closing_connections.contains( c )){
+							try{
+								c.setUnusable();
+			
+								utp_provider.close( c.getSocket() );
+								
+									// wait for the destroying callback
+								
+								async_close = true;
+								
+							}catch( Throwable e ){
+								
+								Debug.out( e );
+							}
+						}
+					}finally{
 						
-						return;
+						if ( async_close ){
+										
+							closing_connections.add( c );
+						
+						}else{
+															
+							if ( closing_connections.contains( c )){
+									
+								return;
+							}
+							
+							removeConnection( c );
+						}
 					}
 				}
-				
-				removeConnection( c );
-			}
-		}
+			});
 	}
 	
 	public void
@@ -1322,80 +1302,4 @@ UTPConnectionManager
 	{
 		plugin.log( str );
 	}
-	
-	/* no longer works as non-native impl
-	private void
-	hackHandler(
-		PRUDPPacketHandler		packet_handler )
-	{
-		try{
-			Class cla = packet_handler.getClass();
-			
-			Field f_socket = cla.getDeclaredField( "socket" );
-			
-			f_socket.setAccessible( true );
-			
-			Object dg_sock = f_socket.get( packet_handler );
-			
-			if ( last_hack == dg_sock ){
-				
-				return;
-			}
-			
-			last_hack = dg_sock;
-			
-			Field f_impl = dg_sock.getClass().getDeclaredField( "impl" );
-				
-			f_impl.setAccessible( true );
-
-			Object dg_impl = f_impl.get( dg_sock );
-			
-			Class dg_class = dg_impl.getClass();
-
-			int	hacked = 0;
-			
-			while( dg_class != null ){
-				
-				String[]	field_names = { "fd", "fd1", "fd2" };
-				
-				for ( String field_name: field_names ){
-					
-					try{
-						Field f_fd = dg_class.getDeclaredField( field_name );
-						
-						f_fd.setAccessible( true );
-						
-						Object fd = f_fd.get( dg_impl );
-						
-						if ( fd != null ){
-							
-							Field f_fd_fd = fd.getClass().getDeclaredField( "fd" );
-				
-							f_fd_fd.setAccessible( true );
-							
-							Object fd_fd = f_fd_fd.get( fd );
-										
-							utp_provider.setSocketOptions(((Number)fd_fd).longValue());
-							
-							hacked++;
-						}
-					}catch( Throwable e ){	
-					}
-				}
-				
-				dg_class = dg_class.getSuperclass();
-			}
-			
-			hack_worked = hacked > 0;
-			
-			log( "Set options on " + hacked + " socket(s)" );
-			
-		}catch( Throwable e ){
-			
-			hack_worked = false;
-			
-			log( "Failed to set socket options: " + Debug.getNestedExceptionMessage(e));
-		}
-	}
-	*/
 }

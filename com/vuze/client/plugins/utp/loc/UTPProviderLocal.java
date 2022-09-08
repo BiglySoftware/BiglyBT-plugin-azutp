@@ -27,13 +27,13 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.HostNameToIPResolver;
 
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderException;
-//import com.vuze.client.plugins.utp.loc.v1.UTPTranslatedV1;
 import com.vuze.client.plugins.utp.loc.v2.UTPTranslatedV2;
 
 
@@ -44,16 +44,16 @@ UTPProviderLocal
 	UTPTranslated.UTPGotIncomingConnection, 
 	UTPTranslated.UTPFunctionTable
 {
-	private static final int version = 2;
-	
 	private boolean				test_mode;
 	private UTPTranslated		impl;
 	
 	private UTPProviderCallback		callback;
 	
-	private long					socket_id_next;
+	private long				socket_id_next;
 	
-	private Map<Long,UTPSocket>	socket_map = new HashMap<Long, UTPSocket>();
+		// all access to this is single threaded by caller
+	
+	private Map<Long,UTPSocket>		socket_map = new HashMap<Long, UTPSocket>();
 	
 	private Map<Integer,Integer>	pending_options = new HashMap<Integer, Integer>();
 	
@@ -85,14 +85,7 @@ UTPProviderLocal
 			
 			callback	= _callback;
 			
-			if ( version == 1 ){
-			
-				//impl = new UTPTranslatedV1( callback, test_mode );
-				
-			}else{
-			
-				impl = new UTPTranslatedV2( callback, this, this, this, test_mode );
-			}
+			impl = new UTPTranslatedV2( callback, this, this, this, test_mode );
 			
 			if ( pending_options.size() > 0 ){
 				
@@ -111,7 +104,7 @@ UTPProviderLocal
 	public int
 	getVersion()
 	{
-		return( version );
+		return( 2 );
 	}
 	
 	public boolean
@@ -138,16 +131,15 @@ UTPProviderLocal
 		Object		user_data,
 		UTPSocket	socket )
 	{
-		long socket_id;
-		
-		synchronized( socket_map ){
-		
-			socket_id = socket_id_next++;
-			
-			socket_map.put( socket_id, socket );
-			
-			//System.out.println( "socket_map: " + socket_map.size());
+		if ( Constants.IS_CVS_VERSION ){
+			callback.checkThread();
 		}
+		
+		long socket_id = socket_id_next++;
+			
+		socket_map.put( socket_id, socket );
+			
+		// System.out.println( "socket_map: " + socket_map.size());
 		
 		InetSocketAddress[] addr_out = {null};
 		
@@ -156,28 +148,12 @@ UTPProviderLocal
 		callback.incomingConnection( addr_out[0], socket_id, impl.UTP_GetSocketConnectionID( socket ) & 0x0000ffffL );
 		
 		try{
-			if ( version == 1 ){
+			impl.UTP_SetUserData( socket, new Object[]{ socket_id, socket });
 			
-				impl.UTP_SetCallbacks( socket, this, new Object[]{ socket_id, socket });
-			}else{
-				
-				impl.UTP_SetUserData( socket, new Object[]{ socket_id, socket });
-			}
 		}catch( Throwable e ){
 			
 			Debug.out( e );
 		}
-	}
-	
-	public void 
-	on_read(
-		Object 		user_data,
-		byte[]	 	bytes, 
-		int 		count )
-	{
-		long socket_id = (Long)((Object[])user_data)[0];
-
-		callback.read( socket_id, bytes );
 	}
 	
 	public void 
@@ -222,13 +198,14 @@ UTPProviderLocal
 		callback.setState(socket_id, state);
 		
 		if ( state == UTPTranslated.UTP_STATE_DESTROYING ){
-			
-			synchronized( socket_map ){
 				
-				socket_map.remove( socket_id);
-				
-				//System.out.println( "socket_map: " + socket_map.size());
+			if ( Constants.IS_CVS_VERSION ){
+				callback.checkThread();
 			}
+			
+			socket_map.remove( socket_id);
+				
+			// System.out.println( "socket_map: " + socket_map.size());
 		}
 	}
 	
@@ -277,53 +254,26 @@ UTPProviderLocal
 		throws UTPProviderException
 	{
 		try{
-			UTPSocket 	socket;
-			long		socket_id;
+			UTPSocket socket = impl.UTP_Create();
 			
-			if ( version == 1 ){
+			if ( socket == null ){
 				
-				socket = impl.UTP_Create( this, "", new InetSocketAddress( HostNameToIPResolver.syncResolve( to_address), to_port ));
-				
-				if ( socket == null ){
-					
-					throw( new UTPProviderException( "Failed to create socket" ));
-				}
-								
-				synchronized( socket_map ){
-				
-					socket_id = socket_id_next++;
-					
-					socket_map.put( socket_id, socket );
-					
-					//System.out.println( "socket_map: " + socket_map.size());
-				}
-				
-				impl.UTP_SetCallbacks( socket, this, new Object[]{ socket_id, socket });
-				
-				impl.UTP_Connect( socket );
-				
-			}else{
-				
-				socket = impl.UTP_Create();
-				
-				if ( socket == null ){
-					
-					throw( new UTPProviderException( "Failed to create socket" ));
-				}
-				
-				synchronized( socket_map ){
-					
-					socket_id = socket_id_next++;
-					
-					socket_map.put( socket_id, socket );
-					
-					//System.out.println( "socket_map: " + socket_map.size());
-				}
-				
-				impl.UTP_SetUserData( socket, new Object[]{ socket_id, socket });
-				
-				impl.UTP_Connect( socket, new InetSocketAddress( HostNameToIPResolver.syncResolve( to_address), to_port ));
+				throw( new UTPProviderException( "Failed to create socket" ));
 			}
+			
+			if ( Constants.IS_CVS_VERSION ){
+				callback.checkThread();
+			}
+
+			long socket_id = socket_id_next++;
+						
+			socket_map.put( socket_id, socket );
+				
+			// System.out.println( "socket_map: " + socket_map.size());
+			
+			impl.UTP_SetUserData( socket, new Object[]{ socket_id, socket });
+			
+			impl.UTP_Connect( socket, new InetSocketAddress( HostNameToIPResolver.syncResolve( to_address), to_port ));
 			
 			return( new long[]{ socket_id, impl.UTP_GetSocketConnectionID( socket ) & 0x0000ffffL });
 			
@@ -362,12 +312,11 @@ UTPProviderLocal
 	
 		throws UTPProviderException
 	{
-		UTPSocket socket;
-		
-		synchronized( socket_map ){
-			
-			socket = socket_map.get( utp_socket );
+		if ( Constants.IS_CVS_VERSION ){
+			callback.checkThread();
 		}
+		
+		UTPSocket socket = socket_map.get( utp_socket );
 		
 		if ( socket != null ){
 			
@@ -386,12 +335,11 @@ UTPProviderLocal
 	
 		throws UTPProviderException
 	{
-		UTPSocket socket;
-		
-		synchronized( socket_map ){
-			
-			socket = socket_map.get( utp_socket );
+		if ( Constants.IS_CVS_VERSION ){
+			callback.checkThread();
 		}
+		
+		UTPSocket socket = socket_map.get( utp_socket );
 		
 		if ( socket != null ){
 			
@@ -407,12 +355,11 @@ UTPProviderLocal
 	
 		throws UTPProviderException
 	{
-		UTPSocket socket;
-		
-		synchronized( socket_map ){
-			
-			socket = socket_map.get( utp_socket );
+		if ( Constants.IS_CVS_VERSION ){
+			callback.checkThread();
 		}
+		
+		UTPSocket socket = socket_map.get( utp_socket );
 		
 		if ( socket != null ){
 			
@@ -430,14 +377,13 @@ UTPProviderLocal
 	
 		throws UTPProviderException
 	{
-		UTPSocket socket;
-		
-		synchronized( socket_map ){
-			
-			socket = socket_map.remove( utp_socket );
-			
-			//System.out.println( "socket_map: " + socket_map.size());
+		if ( Constants.IS_CVS_VERSION ){
+			callback.checkThread();
 		}
+		
+		UTPSocket socket = socket_map.remove( utp_socket );
+
+		// System.out.println( "socket_map: " + socket_map.size());
 		
 		if ( socket != null ){
 			

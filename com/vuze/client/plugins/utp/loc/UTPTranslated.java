@@ -87,11 +87,6 @@ UTPTranslated
 	UTP_GetSocketConnectionID(
 		UTPSocket				conn );
 	
-	public boolean
-	UTP_Write(
-		UTPSocket				conn,
-		int						bytes );
-		
 	public void 
 	UTP_RBDrained(
 		UTPSocket				 conn );
@@ -99,9 +94,7 @@ UTPTranslated
 	public void
 	UTP_Close(
 		UTPSocket				conn );
-		
-		// version 2
-	
+			
 	public void
 	UTP_IncomingIdle();
 
@@ -171,14 +164,7 @@ UTPTranslated
 			Object 		userdata,
 			ByteBuffer 	bytes, 
 			int 		count );
-		
-		public void 
-		on_write(
-			Object 		userdata, 
-			byte[] 		bytes, 
-			int 		offset, 
-			int 		count );
-		
+				
 		public int  
 		get_rb_size(
 			Object 		userdata );

@@ -73,13 +73,6 @@ UTPProviderCallback
 	
 	public boolean
 	send(
-		String		address,
-		int			port,
-		byte[]		buffer,
-		int			length );
-
-	public boolean
-	send(
 		InetSocketAddress	address,
 		byte[]				buffer,
 		int					length );
@@ -88,13 +81,6 @@ UTPProviderCallback
 	read(
 		long		utp_socket,
 		ByteBuffer	data );
-	
-	public void
-	write(
-		long		utp_socket,
-		byte[]		data,
-		int			offset,
-		int			length );
 	
 	public int
 	getReadBufferSize(

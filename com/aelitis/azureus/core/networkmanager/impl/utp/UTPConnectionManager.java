@@ -53,7 +53,8 @@ import com.biglybt.core.networkmanager.impl.IncomingConnectionManager;
 import com.biglybt.core.networkmanager.impl.ProtocolDecoder;
 import com.biglybt.core.networkmanager.impl.TransportCryptoManager;
 import com.biglybt.core.networkmanager.impl.TransportHelperFilter;
-
+import com.biglybt.core.stats.CoreStats;
+import com.biglybt.core.stats.CoreStatsProvider;
 import com.vuze.client.plugins.utp.UTPPlugin;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
@@ -61,7 +62,8 @@ import com.vuze.client.plugins.utp.UTPProviderFactory;
 
 
 public class 
-UTPConnectionManager 
+UTPConnectionManager
+	implements CoreStatsProvider
 {
 	private static final int MIN_MSS	= 256;
 	private static final int MAX_HEADER	= 128;
@@ -71,6 +73,22 @@ UTPConnectionManager
 
 	private static final int CLOSING_TIMOUT			= 2*60*1000;
 	private static final int UTP_PROVIDER_TIMEOUT	= 30*1000;
+	
+	public static final String ST_NET_UTP_PACKET_SENT_COUNT			= "net.utp.packet.sent.count";
+	public static final String ST_NET_UTP_PACKET_RECEIVED_COUNT		= "net.utp.packet.received.count";
+	public static final String ST_NET_UTP_CONNECTION_COUNT			= "net.utp.connection.count";
+	public static final String ST_NET_UTP_SOCKET_COUNT				= "net.utp.socket.count";
+
+	private static final String[][] ST_ALL = {
+			{ ST_NET_UTP_PACKET_SENT_COUNT,			CoreStats.CUMULATIVE },
+			{ ST_NET_UTP_PACKET_RECEIVED_COUNT,		CoreStats.CUMULATIVE },
+			{ ST_NET_UTP_CONNECTION_COUNT,			CoreStats.POINT },
+			{ ST_NET_UTP_SOCKET_COUNT,				CoreStats.POINT },
+	};
+	
+	static{
+		CoreStats.addStatsDefinitions( ST_ALL );
+	}
 	
 	private static final LogIDs LOGID = LogIDs.NET;
 	
@@ -95,14 +113,7 @@ UTPConnectionManager
 	private Map<Long,UTPConnection>								socket_connection_map 	= new HashMap<Long, UTPConnection>();
 	
 	private Set<UTPConnection>							closing_connections		= new HashSet<UTPConnection>();
-	
-		// provider version 1 only
-	
-	private UTPConnection		active_write;
-	private ByteBuffer[]		active_write_buffers;
-	private int					active_write_start;
-	private int					active_write_len;
-	
+		
 	private static final long	MAX_INCOMING_QUEUED			= 4*1024*1024;
 	private static final long	MAX_INCOMING_QUEUED_LOG_OK	= MAX_INCOMING_QUEUED - 256*1024;
 	
@@ -111,6 +122,9 @@ UTPConnectionManager
 	
 	private AtomicLong			total_incoming_queued = new AtomicLong();
 	private volatile int		total_incoming_queued_log_state;
+	
+	private volatile long		packet_sent_count;
+	private volatile long		packet_received_count;
 	
 	private int					current_local_port;
 	
@@ -129,6 +143,40 @@ UTPConnectionManager
 		plugin		= _plugin;
 		
 		dispatcher.setPriority( Thread.MAX_PRIORITY - 1 );
+		
+		Set	types = new HashSet();
+		
+		types.add( ST_NET_UTP_PACKET_SENT_COUNT );
+		types.add( ST_NET_UTP_PACKET_RECEIVED_COUNT );
+		
+		types.add( ST_NET_UTP_CONNECTION_COUNT );
+		types.add( ST_NET_UTP_SOCKET_COUNT );			
+
+		CoreStats.registerProvider( types, this );
+	}
+	
+	@Override
+	public void
+	updateStats(
+		Set		types,
+		Map		values )
+	{
+		if ( types.contains( ST_NET_UTP_PACKET_SENT_COUNT )){
+
+			values.put( ST_NET_UTP_PACKET_SENT_COUNT, new Long( packet_sent_count ));
+		}
+		if ( types.contains( ST_NET_UTP_PACKET_RECEIVED_COUNT )){
+
+			values.put( ST_NET_UTP_PACKET_RECEIVED_COUNT, new Long( packet_received_count ));
+		}	
+		if ( types.contains( ST_NET_UTP_CONNECTION_COUNT )){
+
+			values.put( ST_NET_UTP_CONNECTION_COUNT, new Long( connection_count ));
+		}
+		if ( types.contains( ST_NET_UTP_SOCKET_COUNT )){
+
+			values.put( ST_NET_UTP_SOCKET_COUNT, new Long( utp_provider.getSocketCount()));
+		}
 	}
 	
 	public int
@@ -145,6 +193,7 @@ UTPConnectionManager
 			Debug.out( "eh" );
 		}
 	}
+	
 	public void
 	activate()
 	{
@@ -254,21 +303,7 @@ UTPConnectionManager
 							
 							accept( current_local_port, adress,	utp_socket, con_id );
 						}
-						
-						public boolean
-						send(
-							String		address,
-							int			port,
-							byte[]		buffer,
-							int			length )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							return( plugin.send( current_local_port, new InetSocketAddress( address, port ), buffer, length ));
-						}
-						
+												
 						public boolean
 						send(
 							InetSocketAddress	adress,
@@ -278,6 +313,8 @@ UTPConnectionManager
 							if ( Constants.IS_CVS_VERSION ){
 								checkThread();
 							}
+							
+							packet_sent_count++;
 							
 							return( plugin.send( current_local_port, adress, buffer, length ));
 						}
@@ -302,67 +339,6 @@ UTPConnectionManager
 								try{
 									connection.receive( bb );
 									
-								}catch( Throwable e ){
-																	
-									connection.close( Debug.getNestedExceptionMessage(e));
-								}
-							}
-						}
-						
-						public void
-						write(
-							long		utp_socket,
-							byte[]		data,
-							int			offset,
-							int			length )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							UTPConnection connection = socket_connection_map.get( utp_socket );
-							
-							if ( connection == null ){
-								
-								Debug.out( "write: unknown socket!" );
-								
-							}else{
-								
-								try{
-									if ( utp_provider.getVersion() != 1 ){
-										
-										throw( new Exception( "Invalid flow control" ));
-									}
-									
-									if ( active_write != connection ){
-										
-										throw( new Exception( "Write for incorrect connection!" ));
-									}
-																	
-									int	pos = offset;
-									int	rem	= length;
-									
-									for ( int i=active_write_start; i<active_write_start+active_write_len && rem > 0 ;i++){
-										
-										ByteBuffer b = active_write_buffers[i];
-										
-										int	remaining	= b.remaining();
-										
-										if ( remaining > 0 ){
-										
-											int	to_read = Math.min( rem, remaining );
-											
-											b.get( data, pos, to_read );
-											
-											pos	+= to_read;
-											rem -= to_read;
-										}
-									}
-									
-									if ( rem != 0 ){
-										
-										throw( new Exception( "insufficient data available for write operation" ));
-									}
 								}catch( Throwable e ){
 																	
 									connection.close( Debug.getNestedExceptionMessage(e));
@@ -694,7 +670,9 @@ UTPConnectionManager
 			
 			return( false );
 		}
-					
+			
+		packet_received_count++;
+		
 		if ( total_incoming_queued.get() > MAX_INCOMING_QUEUED ){
 			
 			if ( total_incoming_queued_log_state == 0 ){
@@ -1080,63 +1058,26 @@ UTPConnectionManager
 							result[0] = 0;						
 							
 						}else{
+								
+							int	pre_total = 0;
 							
-							if ( utp_provider.getVersion() == 1 ){
+							for (int i=start;i<start+len;i++){
 								
-								int	pre_total = 0;
-								
-								for (int i=start;i<start+len;i++){
-									
-									pre_total += buffers[i].remaining();
-								}
-								
-								try{
-									active_write			= c;
-									active_write_buffers	= buffers;
-									active_write_start		= start;
-									active_write_len		= len;
-									
-									boolean still_writable = utp_provider.write( c.getSocket(), pre_total );
-								
-									c.setCanWrite( still_writable );
-									
-								}finally{
-									
-									active_write			= null;
-									active_write_buffers	= null;
-								}
-								
-								int	post_total = 0;
-								
-								for (int i=start;i<start+len;i++){
-									
-									post_total += buffers[i].remaining();
-								}
-								
-								result[0] = pre_total - post_total;
-								
-							}else{
-								
-								int	pre_total = 0;
-								
-								for (int i=start;i<start+len;i++){
-									
-									pre_total += buffers[i].remaining();
-								}
-																	
-								boolean still_writable = utp_provider.write( c.getSocket(), buffers, start, len );
-								
-								c.setCanWrite( still_writable );
-								
-								int	post_total = 0;
-								
-								for (int i=start;i<start+len;i++){
-									
-									post_total += buffers[i].remaining();
-								}
-								
-								result[0] = pre_total - post_total;
+								pre_total += buffers[i].remaining();
 							}
+																
+							boolean still_writable = utp_provider.write( c.getSocket(), buffers, start, len );
+							
+							c.setCanWrite( still_writable );
+							
+							int	post_total = 0;
+							
+							for (int i=start;i<start+len;i++){
+								
+								post_total += buffers[i].remaining();
+							}
+							
+							result[0] = pre_total - post_total;
 						}
 					}catch( Throwable e ){
 						

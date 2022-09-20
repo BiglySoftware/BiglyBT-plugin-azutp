@@ -115,6 +115,12 @@ UTPProviderLocal
 		return( impl.isValidPacket( data, length ));
 	}
 	
+	public int
+	getSocketCount()
+	{
+		return( socket_map.size());
+	}
+	
 		// callbacks from implementation
 	
 	public void 
@@ -166,19 +172,7 @@ UTPProviderLocal
 
 		callback.read( socket_id, bytes );
 	}
-	
-	public void 
-	on_write(
-		Object		user_data, 
-		byte[] 		bytes, 
-		int 		offset,
-		int			length )
-	{
-		long socket_id = (Long)((Object[])user_data)[0];
-
-		callback.write( socket_id, bytes, offset, length );
-	}
-	
+		
 	public int  
 	get_rb_size(
 		Object 		user_data )
@@ -304,28 +298,7 @@ UTPProviderLocal
 			throw( new UTPProviderException( "receive failed", e ));
 		}
 	}
-	
-	public boolean
-	write(
-		long		utp_socket,
-		int			avail_bytes )
-	
-		throws UTPProviderException
-	{
-		if ( Constants.IS_CVS_VERSION ){
-			callback.checkThread();
-		}
 		
-		UTPSocket socket = socket_map.get( utp_socket );
-		
-		if ( socket != null ){
-			
-			return( impl.UTP_Write( socket, avail_bytes ));
-		}
-		
-		throw( new UTPProviderException( "Unknown socket" ));
-	}
-	
 	public boolean
 	write(
 		long			utp_socket,

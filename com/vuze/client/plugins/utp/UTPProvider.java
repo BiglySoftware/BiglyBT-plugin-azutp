@@ -46,6 +46,9 @@ UTPProvider
 		byte[]		data,
 		int			length );
 	
+	public int
+	getSocketCount();
+	
 	public  void
 	checkTimeouts();
 	
@@ -67,14 +70,7 @@ UTPProvider
 		int			length )
 	
 		throws UTPProviderException;
-	
-	public boolean
-	write(
-		long		utp_socket,
-		int			avail_bytes )
-	
-		throws UTPProviderException;
-	
+		
 	public boolean
 	write(
 		long			utp_socket,

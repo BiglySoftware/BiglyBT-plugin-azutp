@@ -5294,17 +5294,7 @@ UTPTranslatedV2
 
 		return( conn.conn_id_recv );
 	}
-	
-	public boolean
-	UTP_Write(
-		UTPSocket				conn,
-		int						bytes )
-	{
-		Debug.out( "Not Supported" );
 		
-		return( false );
-	}
-	
 	public boolean
 	UTP_Write(
 		UTPSocket				conn,

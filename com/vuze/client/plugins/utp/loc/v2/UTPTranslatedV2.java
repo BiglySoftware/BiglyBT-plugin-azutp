@@ -30,6 +30,7 @@ import java.nio.ByteBuffer;
 import java.util.*;
 
 import com.biglybt.core.util.AddressUtils;
+import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
 
 import com.vuze.client.plugins.utp.UTPProvider;
@@ -1104,6 +1105,13 @@ UTPTranslatedV2
 	public static final int PACKET_SIZE_BIG	= 1400;
 	public static final int PACKET_SIZE_HUGE_BUCKET	= 4;
 	
+	
+	public static final byte utp_ext_no_extension	= 0;
+	public static final byte utp_ext_sack 			= 1;
+	public static final byte utp_ext_not_used		= 2;	// deprecated but out there
+	public static final byte utp_ext_close_reason	= 3;
+	public static final byte utp_ext_max			= utp_ext_close_reason;
+	
 	/*
 	struct PACKED_ATTRIBUTE PacketFormatV1 {
 		// packet_type (4 high bits)
@@ -1283,7 +1291,7 @@ UTPTranslatedV2
 		public byte[] 
 		serialise()
 		{
-			if ( ext == 0 ){
+			if ( ext == utp_ext_no_extension ){
 				
 				return( super.serialise());
 				
@@ -1299,13 +1307,16 @@ UTPTranslatedV2
 		{
 			super.serialise( buffer );
 			
-			if ( ext != 0 ){
+			if ( ext != utp_ext_no_extension ){
+				
 				int pos = sizeof_PacketFormatV1;
 				
 				buffer[pos++] = ext_next;
 				buffer[pos++] = ext_len;
-								
-				System.arraycopy(extensions, 0, buffer, pos, ext == 1?4:8 );
+							
+					// don't support sending of close-reason yet
+				
+				System.arraycopy(extensions, 0, buffer, pos, ext == utp_ext_sack?4:8 );
 			}
 			
 			return( buffer );
@@ -1317,8 +1328,8 @@ UTPTranslatedV2
 	static class
 	PacketFormatExtensionDeserialised
 	{
-		byte	ext;
-		byte[]	ext_data;
+		final byte	ext;
+		final byte[]	ext_data;
 		
 		PacketFormatExtensionDeserialised(
 			byte		_ext,
@@ -1326,6 +1337,11 @@ UTPTranslatedV2
 		{
 			ext			= _ext;
 			ext_data	= _ext_data;
+			
+			if ( Constants.IS_CVS_VERSION && ext > utp_ext_max ){
+				
+				Debug.out( "Unknown uTP extension: " + ext );
+			}
 		}
 	}
 	
@@ -1342,6 +1358,7 @@ UTPTranslatedV2
 			boolean	test_only )
 		{
 			if ( len < sizeof_PacketFormatV1 ){
+				
 				return;
 			}
 
@@ -1349,9 +1366,14 @@ UTPTranslatedV2
 			byte version 	= (byte)(data[0]&0x0f);
 			byte ext		= data[1];
 			
-			boolean is_v1 = version == 1 && type < ST_NUM_STATES && ext < 3;
+			boolean is_v1 = version == 1 && type < ST_NUM_STATES && ext <= utp_ext_max;
 			
 			if ( !is_v1 ){
+				
+				if ( ext > utp_ext_max && Constants.IS_CVS_VERSION ){
+					
+					Debug.out( "Unknown uTP extension: " + ext );
+				}
 				
 				return;
 			}
@@ -1362,7 +1384,7 @@ UTPTranslatedV2
 			
 			exts = new ArrayList<PacketFormatExtensionDeserialised>();
 			
-			while( ext != 0 ){
+			while( ext != utp_ext_no_extension ){
 				
 				if ( len - pos < 2 ){
 					
@@ -2339,7 +2361,7 @@ UTPTranslatedV2
 		last_rcv_win = get_rcv_window();
 		pfa1.set_version(1);
 		pfa1.set_type(ST_STATE);
-		pfa1.ext = 0;
+		pfa1.ext = utp_ext_no_extension;
 		pfa1.connid = (short)conn_id_send;
 		pfa1.ack_nr = (short)ack_nr.i;
 		pfa1.seq_nr = (short)seq_nr.i;
@@ -2354,8 +2376,8 @@ UTPTranslatedV2
 			// for synacks, so this should not be
 			// as synack
 			if (ASSERTS)_assert(!synack);
-			pfa1.ext = 1;
-			pfa1.ext_next = 0;
+			pfa1.ext = utp_ext_sack;
+			pfa1.ext_next = utp_ext_no_extension;
 			pfa1.ext_len = 4;
 			int m = 0;
 
@@ -3558,10 +3580,10 @@ UTPTranslatedV2
 		for ( PacketFormatExtensionDeserialised ext_record: deserialised.exts ){
 			byte extension = ext_record.ext;
 			switch(extension) {
-			case 1: // Selective Acknowledgment
+			case utp_ext_sack: // Selective Acknowledgment
 				selack_bytes = ext_record.ext_data;
 				break;
-			case 2: // extension bits
+			case utp_ext_not_used: // extension bits
 				conn.extensions = ext_record.ext_data;
 				//memcpy(conn.extensions, data, 8);
 				//LOG_UTPV("0x%08x: got extension bits:%02x%02x%02x%02x%02x%02x%02x%02x", conn,
@@ -4188,7 +4210,7 @@ UTPTranslatedV2
 
 	byte UTP_Version(PacketFormatV1 pf)
 	{
-		return (pf.type() < ST_NUM_STATES && pf.ext < 3 ? pf.version() : 0);
+		return (pf.type() < ST_NUM_STATES && pf.ext <= utp_ext_max ? pf.version() : 0);
 	}
 
 	/*
@@ -4461,7 +4483,7 @@ UTPTranslatedV2
 		pkt.packet_header = p1;
 		p1.set_version(1);
 		p1.set_type(ST_SYN);
-		p1.ext = 0;
+		p1.ext = utp_ext_no_extension;
 		p1.connid = (short)conn.conn_id_recv;
 		p1.windowsize = (int)conn.last_rcv_win;
 		p1.seq_nr = (short)conn.seq_nr.i;

@@ -29,6 +29,7 @@ import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.List;
 
+import com.biglybt.core.networkmanager.Transport;
 import com.biglybt.core.util.DisplayFormatters;
 import com.biglybt.core.util.SystemTime;
 
@@ -61,6 +62,8 @@ UTPConnection
 	private int					last_write		= -1;
 	
 	private long				close_time;
+	
+	private boolean				close_reason_set;
 	
 	protected
 	UTPConnection(
@@ -325,6 +328,20 @@ UTPConnection
 	}
 	
 	protected void
+	setCloseReason(
+		int		utp_close_reason )
+	{
+		// System.out.println( remote_address + ": close reason=" + utp_close_reason );
+		
+		if ( transport != null ){
+			
+			close_reason_set = true;
+			
+			transport.setUserData( Transport.KEY_CLOSE_REASON, utp_close_reason );
+		}
+	}
+	
+	protected void
 	close(
 		String	reason )
 	{
@@ -343,8 +360,24 @@ UTPConnection
 		String	reason )
 	{
 		connected	= false;
+		
+		int close_reason = 0;
+		
+		if ( transport != null ){
+			
+			if ( !close_reason_set ){
 				
-		manager.close( this, reason );
+				Integer cr = (Integer)transport.getUserData( Transport.KEY_CLOSE_REASON );
+				
+				if ( cr != null ){
+					
+					close_reason = cr;
+				}
+			}
+		}	
+		
+		manager.close( this, reason, close_reason );
+		
 	}
 	
 	protected boolean

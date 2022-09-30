@@ -93,7 +93,8 @@ UTPTranslated
 	
 	public void
 	UTP_Close(
-		UTPSocket				conn );
+		UTPSocket				conn,
+		int						close_reason );
 			
 	public void
 	UTP_IncomingIdle();
@@ -185,5 +186,11 @@ UTPTranslated
 			boolean 	send, 
 			int 		count, 
 			int 		type );
+		
+		public void 
+		on_close_reason(
+			Object 		userdata, 
+			int 		state);
+		
 	}
 }

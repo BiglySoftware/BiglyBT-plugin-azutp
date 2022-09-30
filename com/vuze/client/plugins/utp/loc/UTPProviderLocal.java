@@ -204,6 +204,16 @@ UTPProviderLocal
 	}
 	
 	public void 
+	on_close_reason(
+		Object 		user_data, 
+		int 		reason )
+	{
+		long socket_id = (Long)((Object[])user_data)[0];
+		
+		callback.setCloseReason(socket_id, reason);
+	}
+	
+	public void 
 	on_error(
 		Object 		user_data, 
 		int 		errcode )
@@ -346,7 +356,8 @@ UTPProviderLocal
 		
 	public void
 	close(
-		long		utp_socket )
+		long		utp_socket,
+		int			close_reason )
 	
 		throws UTPProviderException
 	{
@@ -360,7 +371,7 @@ UTPProviderLocal
 		
 		if ( socket != null ){
 			
-			impl.UTP_Close( socket );
+			impl.UTP_Close( socket, close_reason );
 		}
 	}
 	

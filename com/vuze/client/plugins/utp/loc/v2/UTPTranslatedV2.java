@@ -19,7 +19,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-
+// originally from https://github.com/bittorrent/libutp/blob/master/utp_internal.cpp
 
 package com.vuze.client.plugins.utp.loc.v2;
 
@@ -282,8 +282,9 @@ UTPTranslatedV2
 	public static final int UTP_SNDBUF					= 19;
 	public static final int UTP_RCVBUF					= 20;
 	public static final int UTP_TARGET_DELAY			= 21;
+	public static final int UTP_ON_CLOSE_REASON			= 22;
 
-	public static final int UTP_ARRAY_SIZE				= 22;	// must be last
+	public static final int UTP_ARRAY_SIZE				= 23;	// must be last
 	
 	//extern const char *utp_callback_names[];
 
@@ -516,7 +517,17 @@ UTPTranslatedV2
 		ctx.callbacks[UTP_SENDTO].callback(args);
 	}
 	
-	
+	void utp_call_on_close_reason(utp_context ctx, UTPSocketImpl socket, int close_reason)
+	{
+		if (ctx.callbacks[UTP_ON_CLOSE_REASON]==null) return;
+		_utp_callback_arguments args = utp_callback_arguments;//new utp_callback_arguments();
+		args.callback_type = UTP_ON_CLOSE_REASON;
+		args.context = ctx;
+		args.socket = socket;
+		args.state = close_reason;
+		ctx.callbacks[UTP_ON_CLOSE_REASON].callback(args);
+	}
+
 	// utp_utils
 	
 	public static final int ETHERNET_MTU = 1500;
@@ -620,7 +631,11 @@ UTPTranslatedV2
 						send_to_proc.send_to_proc( null, args.buf, args.address );
 						break;
 					}
-					
+					case UTP_ON_CLOSE_REASON:{
+						fn_table.on_close_reason( args.socket.userdata, args.state );
+						break;
+					}		
+
 					default:{
 						Debug.out( "Default not supported!" );
 					}
@@ -970,6 +985,8 @@ UTPTranslatedV2
 			callbacks[UTP_GET_MICROSECONDS] = utp_default_callbacks;
 			callbacks[UTP_GET_RANDOM]       = utp_default_callbacks;
 			
+			callbacks[UTP_ON_CLOSE_REASON]  = utp_default_callbacks;
+			
 	
 			// 1 MB of receive buffer (i.e. max bandwidth delay product)
 			// means that from  a peer with 200 ms RTT, we cannot receive
@@ -1269,8 +1286,9 @@ UTPTranslatedV2
 		}
 	};
 	
-	public static final int sizeof_PacketFormatAckV1 		= sizeof_PacketFormatV1 + 6;
-	public static final int sizeof_PacketFormatExtensionsV1 = sizeof_PacketFormatV1 + 10;
+	public static final int sizeof_PacketFormatAckV1 			= sizeof_PacketFormatV1 + 6;
+	public static final int sizeof_PacketFormatCloseReasonV1	= sizeof_PacketFormatV1 + 6;
+	public static final int sizeof_PacketFormatExtensionsV1 	= sizeof_PacketFormatV1 + 10;
 
 	static class PacketFormatExtensionsV1 extends PacketFormatV1{
 		byte ext_next;
@@ -1282,12 +1300,6 @@ UTPTranslatedV2
 			super();
 		}
 		
-		PacketFormatExtensionsV1(
-			byte[]	data )
-		{
-			super( data );
-		}
-		
 		public byte[] 
 		serialise()
 		{
@@ -1296,8 +1308,15 @@ UTPTranslatedV2
 				return( super.serialise());
 				
 			}else{
-			
-				return( serialise( new byte[ext==1?sizeof_PacketFormatAckV1:sizeof_PacketFormatExtensionsV1] ));
+				int size;
+				if ( ext == utp_ext_sack ){
+					size = sizeof_PacketFormatAckV1;
+				}else if ( ext == utp_ext_not_used ){
+					size = sizeof_PacketFormatExtensionsV1;
+				}else{
+					size = sizeof_PacketFormatCloseReasonV1;
+				}
+				return( serialise( new byte[size]));
 			}
 		}
 		
@@ -1314,9 +1333,7 @@ UTPTranslatedV2
 				buffer[pos++] = ext_next;
 				buffer[pos++] = ext_len;
 							
-					// don't support sending of close-reason yet
-				
-				System.arraycopy(extensions, 0, buffer, pos, ext == utp_ext_sack?4:8 );
+				System.arraycopy(extensions, 0, buffer, pos, ext == utp_ext_sack || ext == utp_ext_close_reason?4:8 );
 			}
 			
 			return( buffer );
@@ -1337,7 +1354,7 @@ UTPTranslatedV2
 		{
 			ext			= _ext;
 			ext_data	= _ext_data;
-			
+						
 			if ( Constants.IS_CVS_VERSION && ext > utp_ext_max ){
 				
 				Debug.out( "Unknown uTP extension: " + ext );
@@ -2132,6 +2149,8 @@ UTPTranslatedV2
 		// the slow-start threshold, in bytes
 		int ssthresh;
 
+		int close_reason;
+		
 		/*
 		void log(int level, char const *fmt, ...)
 		{
@@ -2610,8 +2629,9 @@ UTPTranslatedV2
 				//							  added);
 				
 				pkt = new OutgoingPacket();
-				pkt.packet_header = new PacketFormatV1();
-				
+				PacketFormatExtensionsV1 packet_header = new PacketFormatExtensionsV1();
+				packet_header.ext = utp_ext_no_extension;
+				pkt.packet_header = packet_header;
 				pkt.packet_payload = new byte[added];
 				pkt.payload = 0;
 				pkt.transmissions = 0;
@@ -2661,7 +2681,19 @@ UTPTranslatedV2
 			PacketFormatV1 p1 = (PacketFormatV1)pkt.packet_header;
 			p1.set_version(1);
 			p1.set_type(flags);
-			p1.ext = 0;
+			if ( close_reason != 0 && p1.ext == utp_ext_no_extension && p1 instanceof PacketFormatExtensionsV1 ){
+				PacketFormatExtensionsV1 pfe = (PacketFormatExtensionsV1)p1;
+				pfe.ext = utp_ext_close_reason;
+				pfe.ext_len = 4;
+				pfe.ext_next = utp_ext_no_extension;
+				pfe.extensions[0] = (byte)(close_reason>>24);
+				pfe.extensions[1] = (byte)(close_reason>>16);
+				pfe.extensions[2] = (byte)(close_reason>>8);
+				pfe.extensions[3] = (byte)(close_reason);
+			}else{
+				// parg - no idea why the existing code overwrites any extension :(
+				p1.ext = utp_ext_no_extension;
+			}
 			p1.connid = (short)conn_id_send;
 			p1.windowsize = (int)last_rcv_win;
 			p1.ack_nr = (short)ack_nr.i;
@@ -3449,7 +3481,7 @@ UTPTranslatedV2
 		
 		pf1.set_version(1);
 		pf1.set_type(ST_RESET);
-		pf1.ext = 0;
+		pf1.ext = utp_ext_no_extension;
 		pf1.connid = (short)conn_id_send;
 		pf1.ack_nr = ack_nr;
 		pf1.seq_nr = seq_nr;
@@ -3580,15 +3612,28 @@ UTPTranslatedV2
 		for ( PacketFormatExtensionDeserialised ext_record: deserialised.exts ){
 			byte extension = ext_record.ext;
 			switch(extension) {
-			case utp_ext_sack: // Selective Acknowledgment
-				selack_bytes = ext_record.ext_data;
-				break;
-			case utp_ext_not_used: // extension bits
-				conn.extensions = ext_record.ext_data;
-				//memcpy(conn.extensions, data, 8);
-				//LOG_UTPV("0x%08x: got extension bits:%02x%02x%02x%02x%02x%02x%02x%02x", conn,
-				//	conn.extensions[0], conn.extensions[1], conn.extensions[2], conn.extensions[3],
-				//	conn.extensions[4], conn.extensions[5], conn.extensions[6], conn.extensions[7]);
+				case utp_ext_sack:{ // Selective Acknowledgment
+					selack_bytes = ext_record.ext_data;
+					break;
+				}
+				case utp_ext_not_used:{ // extension bits
+					conn.extensions = ext_record.ext_data;
+					//memcpy(conn.extensions, data, 8);
+					//LOG_UTPV("0x%08x: got extension bits:%02x%02x%02x%02x%02x%02x%02x%02x", conn,
+					//	conn.extensions[0], conn.extensions[1], conn.extensions[2], conn.extensions[3],
+					//	conn.extensions[4], conn.extensions[5], conn.extensions[6], conn.extensions[7]);
+					break;
+				}
+				case utp_ext_close_reason:{
+					byte[] data = ext_record.ext_data;
+					
+					if ( data.length == 4 ){
+						int close_reason = ((data[0]<<24)&0xff000000) | ((data[1]<<16)&0x00ff0000) | ((data[2]<<8)&0x0000ff00) | (data[3]&0x000000ff);
+						
+						utp_call_on_close_reason(conn.ctx, conn, close_reason );
+					}
+					break;
+				}
 			}
 		}
 		
@@ -5139,7 +5184,7 @@ UTPTranslatedV2
 	// It is not valid for the upper layer to refer to socket after it is closed.
 	// Data will keep to try being delivered after the close.
 
-	void utp_close(UTPSocketImpl conn)
+	void utp_close(UTPSocketImpl conn, int close_reason )
 	{
 		if(ASSERTS)_assert(conn);
 		if (conn==null) return;
@@ -5153,6 +5198,7 @@ UTPTranslatedV2
 		//conn->log(UTP_LOG_DEBUG, "UTP_Close in state:%s", statenames[conn->state]);
 		//#endif
 
+		conn.close_reason = close_reason;
 		switch(conn.state) {
 		case CS_CONNECTED:
 		case CS_CONNECTED_FULL:
@@ -5281,7 +5327,7 @@ UTPTranslatedV2
 		
 		if ( utp_connect( socket, address ) != 0 ){
 
-			utp_close( socket );
+			utp_close( socket, 0 );
 			
 			throw( new UTPProviderException( "Connect failed" ));
 		}
@@ -5359,9 +5405,10 @@ UTPTranslatedV2
 	
 	public void
 	UTP_Close(
-		UTPSocket				conn )
+		UTPSocket				conn,
+		int						close_reason )
 	{
-		utp_close((UTPSocketImpl)conn);
+		utp_close((UTPSocketImpl)conn, close_reason);
 	}
 	
 		// unsupported V1 methods

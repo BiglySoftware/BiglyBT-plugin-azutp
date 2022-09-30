@@ -428,6 +428,24 @@ UTPConnectionManager
 							}
 						}
 						
+						@Override
+						public void 
+						setCloseReason(
+							long 	utp_socket, 
+							int 	reason)
+						{
+							if ( Constants.IS_CVS_VERSION ){
+								checkThread();
+							}
+
+							UTPConnection connection = socket_connection_map.get( utp_socket );
+							
+							if ( connection != null ){
+							
+								connection.setCloseReason( reason );
+							}
+						}
+						
 						public void
 						error(
 							long		utp_socket,
@@ -1160,8 +1178,9 @@ UTPConnectionManager
 	
 	protected void
 	close(
-		final UTPConnection		c,
-		final String			r )
+		UTPConnection	c,
+		String			r,
+		int				close_reason )
 	{
 		dispatcher.dispatch(
 			new AERunnable()
@@ -1179,7 +1198,7 @@ UTPConnectionManager
 							try{
 								c.setUnusable();
 			
-								utp_provider.close( c.getSocket() );
+								utp_provider.close( c.getSocket(), close_reason );
 								
 									// wait for the destroying callback
 								

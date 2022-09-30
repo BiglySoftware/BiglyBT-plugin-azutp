@@ -92,6 +92,11 @@ UTPProviderCallback
 		int			state );
 	
 	public void
+	setCloseReason(
+		long		utp_socket,
+		int			reason );
+	
+	public void
 	error(
 		long		utp_socket,
 		int			error );

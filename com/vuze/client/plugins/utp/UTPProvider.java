@@ -88,7 +88,8 @@ UTPProvider
 		
 	public void
 	close(
-		long		utp_socket )
+		long		utp_socket,
+		int			close_reason )
 	
 		throws UTPProviderException;
 	

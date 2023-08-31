@@ -10,7 +10,8 @@ or, just rename this file to build.gradle
 */
 
 android {
-    compileSdkVersion rootProject.ext.compileSdkVersion
+    namespace 'com.vuze.client.plugins.utp'
+    compileSdk rootProject.ext.compileSdkVersion
 
     defaultConfig {
         minSdkVersion 14

@@ -23,7 +23,18 @@
 
 package com.vuze.client.plugins.utp.loc;
 
+import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
+
 public interface 
 UTPSocket 
 {
+	public long
+	getID();
+	
+	public UTPConnection
+	getUTPConnection();
+	
+	public void
+	setUTPConnection(
+		UTPConnection		connection );
 }

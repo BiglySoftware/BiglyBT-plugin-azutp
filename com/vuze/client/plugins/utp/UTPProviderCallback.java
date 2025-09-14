@@ -27,6 +27,8 @@ import java.io.File;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
+import com.vuze.client.plugins.utp.loc.UTPSocket;
+
 public interface 
 UTPProviderCallback 
 {
@@ -62,13 +64,13 @@ UTPProviderCallback
 	incomingConnection(
 		String		address,
 		int			port,
-		long		utp_socket,
+		UTPSocket	utp_socket,
 		long		con_id );
 	
 	public void
 	incomingConnection(
 		InetSocketAddress	address,
-		long		utp_socket,
+		UTPSocket	utp_socket,
 		long		con_id );
 	
 	public boolean
@@ -79,31 +81,31 @@ UTPProviderCallback
 	
 	public void
 	read(
-		long		utp_socket,
+		UTPSocket	socket,
 		ByteBuffer	data );
 	
 	public int
 	getReadBufferSize(
-		long		utp_socket );
+		UTPSocket	socket );
 	
 	public void
 	setState(
-		long		utp_socket,
+		UTPSocket	socket,
 		int			state );
 	
 	public void
 	setCloseReason(
-		long		utp_socket,
+		UTPSocket	socket,
 		int			reason );
 	
 	public void
 	error(
-		long		utp_socket,
+		UTPSocket	socket,
 		int			error );
 	
 	public void
 	overhead(
-		long		utp_socket,
+		UTPSocket	socket,
 		boolean		send,
 		int			size,
 		int			type );

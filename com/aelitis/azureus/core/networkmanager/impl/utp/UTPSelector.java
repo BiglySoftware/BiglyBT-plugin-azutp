@@ -35,7 +35,8 @@ import com.biglybt.core.networkmanager.impl.TransportHelper;
 public class 
 UTPSelector 
 {
-	private static final int POLL_FREQUENCY	= COConfigurationManager.getIntParameter( "network.utp.poll.time", 50 );
+	private static final int MANAGER_POLL_FREQUENCY		= 500;
+	private static final int SELECTOR_POLL_FREQUENCY	= COConfigurationManager.getIntParameter( "network.utp.poll.time", 50 );
 	
 	private AEThread2	thread;
 	
@@ -70,7 +71,7 @@ UTPSelector
 						
 						long	now = SystemTime.getMonotonousTime();
 						
-						if ( now - last_poll >= POLL_FREQUENCY ){
+						if ( now - last_poll >= MANAGER_POLL_FREQUENCY ){
 							
 							last_connection_count = manager.poll( ready_sem, now );
 							
@@ -82,7 +83,7 @@ UTPSelector
 							manager.inputIdle();
 						}
 						
-						if ( ready_sem.reserve( last_connection_count==0?1000:(POLL_FREQUENCY/2 ))){
+						if ( ready_sem.reserve( last_connection_count==0?1000:(SELECTOR_POLL_FREQUENCY/2 ))){
 							
 							Object[]	entry;
 							

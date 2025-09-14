@@ -32,16 +32,17 @@ import java.util.List;
 import com.biglybt.core.networkmanager.Transport;
 import com.biglybt.core.util.DisplayFormatters;
 import com.biglybt.core.util.SystemTime;
+import com.vuze.client.plugins.utp.loc.UTPSocket;
 
 
 
 public class 
 UTPConnection 
 {
-	private UTPConnectionManager	manager;
-	private long					utp_socket;
-	private InetSocketAddress		remote_address;
-	private long					con_id;
+	private final UTPConnectionManager	manager;
+	private final UTPSocket				utp_socket;
+	private final InetSocketAddress		remote_address;
+	private final long					con_id;
 	private UTPTransportHelper		transport;
 	
 	private List<ByteBuffer>	read_buffers = new LinkedList<ByteBuffer>();
@@ -70,7 +71,7 @@ UTPConnection
 		UTPConnectionManager	_manager,
 		InetSocketAddress		_remote_address,
 		UTPTransportHelper		_transport,		// null for incoming
-		long					_utp_socket,
+		UTPSocket				_utp_socket,
 		long					_con_id )
 		
 	{
@@ -94,7 +95,7 @@ UTPConnection
 		return( remote_address );
 	}
 	
-	protected long
+	protected UTPSocket
 	getSocket()
 	{
 		return( utp_socket );

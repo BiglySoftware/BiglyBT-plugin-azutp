@@ -43,6 +43,7 @@ import com.biglybt.core.util.ByteFormatter;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.CopyOnWriteList;
 import com.biglybt.core.util.Debug;
+import com.biglybt.core.util.IdentityHashSet;
 import com.biglybt.core.util.SystemTime;
 import com.biglybt.pif.PluginInterface;
 
@@ -59,6 +60,7 @@ import com.vuze.client.plugins.utp.UTPPlugin;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderFactory;
+import com.vuze.client.plugins.utp.loc.UTPSocket;
 
 
 public class 
@@ -71,7 +73,7 @@ UTPConnectionManager
 	public static final int MIN_WRITE_PAYLOAD		= MIN_MSS - MAX_HEADER;
 	public static final int MAX_BUFFERED_PAYLOAD	= 512;
 
-	private static final int CLOSING_TIMOUT			= 2*60*1000;
+	private static final int CLOSING_TIMOUT			= 15*1000;
 	private static final int UTP_PROVIDER_TIMEOUT	= 30*1000;
 	
 	public static final String ST_NET_UTP_PACKET_SENT_COUNT			= "net.utp.packet.sent.count";
@@ -110,9 +112,9 @@ UTPConnectionManager
 	
 	private Map<InetAddress,CopyOnWriteList<UTPConnection>>		address_connection_map 	= new ConcurrentHashMap<InetAddress, CopyOnWriteList<UTPConnection>>();
 	
-	private Map<Long,UTPConnection>								socket_connection_map 	= new HashMap<Long, UTPConnection>();
+	//private Map<Long,UTPConnection>								socket_connection_map 	= new HashMap<Long, UTPConnection>();
 	
-	private Set<UTPConnection>							closing_connections		= new HashSet<UTPConnection>();
+	private Set<UTPConnection>							closing_connections		= new IdentityHashSet<UTPConnection>();
 		
 	private static final long	MAX_INCOMING_QUEUED			= 4*1024*1024;
 	private static final long	MAX_INCOMING_QUEUED_LOG_OK	= MAX_INCOMING_QUEUED - 256*1024;
@@ -277,7 +279,7 @@ UTPConnectionManager
 						incomingConnection(
 							String		host,
 							int			port,
-							long		utp_socket,
+							UTPSocket	utp_socket,
 							long		con_id )
 						{
 							if ( Constants.IS_CVS_VERSION ){
@@ -292,7 +294,7 @@ UTPConnectionManager
 						public void
 						incomingConnection(
 							InetSocketAddress	adress,
-							long				utp_socket,
+							UTPSocket			utp_socket,
 							long				con_id )
 						{
 							if ( Constants.IS_CVS_VERSION ){
@@ -321,14 +323,14 @@ UTPConnectionManager
 						
 						public void
 						read(
-							long			utp_socket,
-							ByteBuffer		bb )
+							UTPSocket 	utp_socket,
+							ByteBuffer	bb )
 						{
 							if ( Constants.IS_CVS_VERSION ){
 								checkThread();
 							}
 
-							UTPConnection connection = socket_connection_map.get( utp_socket );
+							UTPConnection connection = utp_socket.getUTPConnection();
 							
 							if ( connection == null ){
 								
@@ -348,15 +350,13 @@ UTPConnectionManager
 						
 						public int
 						getReadBufferSize(
-							long		utp_socket )
+							UTPSocket 	utp_socket )
 						{
 							if ( Constants.IS_CVS_VERSION ){
 								checkThread();
 							}
 
-							UTPConnection connection;
-															
-							connection = socket_connection_map.get( utp_socket );
+							UTPConnection connection = utp_socket.getUTPConnection();
 							
 							if ( connection == null ){
 								
@@ -374,7 +374,7 @@ UTPConnectionManager
 								if ( res > 512*1024 ){
 									
 										// forces us to advertize a window of 0 bytes
-										// to prevent peer from sending us mroe data until
+										// to prevent peer from sending us more data until
 										// we've managed to flush this to disk
 									
 									res = Integer.MAX_VALUE;
@@ -386,14 +386,14 @@ UTPConnectionManager
 						
 						public void
 						setState(
-							long		utp_socket,
+							UTPSocket 	utp_socket,
 							int			state )
 						{
 							if ( Constants.IS_CVS_VERSION ){
 								checkThread();
 							}
 
-							UTPConnection connection = socket_connection_map.get( utp_socket );
+							UTPConnection connection = utp_socket.getUTPConnection();
 							
 							if ( connection == null ){
 								
@@ -431,14 +431,14 @@ UTPConnectionManager
 						@Override
 						public void 
 						setCloseReason(
-							long 	utp_socket, 
-							int 	reason)
+							UTPSocket 	utp_socket, 
+							int 		reason)
 						{
 							if ( Constants.IS_CVS_VERSION ){
 								checkThread();
 							}
 
-							UTPConnection connection = socket_connection_map.get( utp_socket );
+							UTPConnection connection = utp_socket.getUTPConnection();
 							
 							if ( connection != null ){
 							
@@ -448,14 +448,14 @@ UTPConnectionManager
 						
 						public void
 						error(
-							long		utp_socket,
+							UTPSocket 	utp_socket,
 							int			error )
 						{	
 							if ( Constants.IS_CVS_VERSION ){
 								checkThread();
 							}
 
-							UTPConnection connection = socket_connection_map.get( utp_socket );
+							UTPConnection connection = utp_socket.getUTPConnection();
 							
 							if ( connection == null ){
 								
@@ -469,12 +469,12 @@ UTPConnectionManager
 						
 						public void
 						overhead(
-							long		utp_socket,
+							UTPSocket 	utp_socket,
 							boolean		send,
 							int			size,
 							int			type )
 						{
-							// System.out.println( "overhead( " + send + "," + size + "," + type + " )" );
+							//System.out.println( "overhead( " + send + "," + size + "," + type + " )" );
 						}
 					});
 			
@@ -515,11 +515,12 @@ UTPConnectionManager
 						current_local_port = transport.getLocalPort();
 						
 						try{
-							long[] x = utp_provider.connect( target.getAddress().getHostAddress(), target.getPort());
+							Object[] x = utp_provider.connect( target.getAddress().getHostAddress(), target.getPort());
 						
 							if ( x != null ){
 						
-								result[0] = addConnection( target, transport, x[0], x[1] );
+								result[0] = addConnection( target, transport, (UTPSocket)x[0], (Long)x[1] );
+								
 							}else{
 								
 								result[0] = new IOException( "Connect failed" );
@@ -749,7 +750,7 @@ UTPConnectionManager
 	accept(
 		int						local_port,
 		final InetSocketAddress	remote_address,
-		long					utp_socket,
+		UTPSocket				utp_socket,
 		long					con_id )
 	{		
 		final UTPConnection	new_connection = addConnection( remote_address, null, utp_socket, con_id );
@@ -859,7 +860,7 @@ UTPConnectionManager
 	addConnection(
 		InetSocketAddress		remote_address,
 		UTPTransportHelper		transport_helper,			// null for incoming
-		long					utp_socket,
+		UTPSocket				utp_socket,
 		long					con_id )
 	{
 		List<UTPConnection>	to_destroy = null;
@@ -907,9 +908,11 @@ UTPConnectionManager
 		
 		connection_count = connections.size();
 		
-		UTPConnection existing = socket_connection_map.put( utp_socket, new_connection );
+		UTPConnection existing = utp_socket.getUTPConnection();
 		
-		// System.out.println( "Add connection " + remote_address + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + socket_connection_map.size());
+		utp_socket.setUTPConnection( new_connection );
+		
+		// System.out.println( "Add connection: " + remote_address + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + utp_provider.getSocketCount());
 
 		if ( existing != null ){
 			
@@ -951,30 +954,26 @@ UTPConnectionManager
 			checkThread();
 		}
 		
-		connections.remove( c );
+		if ( connections.remove( c )){
 
-		connection_count = connections.size();
-		
-		CopyOnWriteList<UTPConnection> l = address_connection_map.get( c.getRemoteAddress().getAddress());
-		
-		if ( l != null ){
+			connection_count = connections.size();
 			
-			l.remove( c );
+			InetAddress address = c.getRemoteAddress().getAddress();
 			
-			if ( l.size() == 0 ){
+			CopyOnWriteList<UTPConnection> l = address_connection_map.get( address );
+			
+			if ( l != null ){
 				
-				address_connection_map.remove( c.getRemoteAddress().getAddress());
+				l.remove( c );
+				
+				if ( l.size() == 0 ){
+					
+					address_connection_map.remove( address );
+				}
 			}
-		}
-		
-		UTPConnection existing = socket_connection_map.get( c.getSocket());
-		
-		if ( existing == c ){
 			
-			socket_connection_map.remove( c.getSocket());
+			// System.out.println( "Remove connection: "+ c.getSocket().getID() + "/" + c.getRemoteAddress() + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + utp_provider.getSocketCount());
 		}
-		
-		// System.out.println( "Remove connection: " + c.getRemoteAddress() + ": total=" + connections.size() + "/" + address_connection_map.size() + "/" + socket_connection_map.size());
 	}
 	
 	protected UTPSelector
@@ -988,6 +987,8 @@ UTPConnectionManager
 		AESemaphore		wait_sem,
 		long			now )
 	{		
+			// called every 500ms or so
+		
 		dispatcher.dispatch(
 			new AERunnable()
 			{
@@ -995,6 +996,8 @@ UTPConnectionManager
 				runSupport()
 				{
 					utp_provider.checkTimeouts();
+					
+					//System.out.println("UTPProvider socket count=" +  utp_provider.getSocketCount());
 					
 					if ( closing_connections.size() > 0 ){
 						

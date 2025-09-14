@@ -26,7 +26,6 @@ package com.aelitis.azureus.core.networkmanager.impl.utp;
 import java.util.Random;
 
 import com.biglybt.core.util.RandomUtils;
-import com.biglybt.core.util.SystemTime;
 
 public class 
 UTPUtils 
@@ -78,7 +77,7 @@ UTPUtils
 	static long 
 	UTP_GetMicroseconds()
 	{
-		long counter 	= SystemTime.getHighPrecisionCounter();
+		long counter 	= System.nanoTime();
 		long tick		= System.currentTimeMillis();
 
 

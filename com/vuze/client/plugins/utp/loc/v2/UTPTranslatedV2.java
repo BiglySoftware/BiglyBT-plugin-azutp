@@ -29,6 +29,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
 import com.biglybt.core.util.AddressUtils;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
@@ -125,6 +126,7 @@ UTPTranslatedV2
 		}
 	}
 	
+	/*
 	final private static class
 	UnsignedInteger
 	{
@@ -178,6 +180,7 @@ UTPTranslatedV2
 			return( ( l + (num&MASK )) & MASK );
 		}
 	}
+	*/
 	
 	public static long uint32( long l ){ return( l&UINT_MAX ); }
 
@@ -605,34 +608,34 @@ UTPTranslatedV2
 						return( callback.getRandom());
 					}
 					case UTP_ON_ACCEPT:{
-						incoming_connection_proc.got_incoming_connection( null, args.socket );
+						incoming_connection_proc.got_incoming_connection( args.socket );
 						break;
 					}
 					case UTP_ON_ERROR:{
-						fn_table.on_error(args.socket.userdata, args.error_code);
+						fn_table.on_error(args.socket, args.error_code);
 						break;
 					}
 					case UTP_ON_READ:{
-						fn_table.on_read(args.socket.userdata, args.bbuf, args.len );
+						fn_table.on_read(args.socket, args.bbuf, args.len );
 						break;
 					}
 					case UTP_ON_OVERHEAD_STATISTICS:{
-						fn_table.on_overhead( args.socket.userdata, args.send!=0, args.len, args.type );
+						fn_table.on_overhead( args.socket, args.send!=0, args.len, args.type );
 						break;
 					}
 					case UTP_ON_STATE_CHANGE:{
-						fn_table.on_state( args.socket.userdata, args.state );
+						fn_table.on_state( args.socket, args.state );
 						break;
 					}		
 					case UTP_GET_READ_BUFFER_SIZE:{
-						return( fn_table.get_rb_size( args.socket.userdata ));
+						return( fn_table.get_rb_size( args.socket ));
 					}
 					case UTP_SENDTO:{
 						send_to_proc.send_to_proc( null, args.buf, args.address );
 						break;
 					}
 					case UTP_ON_CLOSE_REASON:{
-						fn_table.on_close_reason( args.socket.userdata, args.state );
+						fn_table.on_close_reason( args.socket, args.state );
 						break;
 					}		
 
@@ -1523,20 +1526,21 @@ UTPTranslatedV2
 	};
 	*/
 	
+	private static final int	SHUT_RD		= 0;
+	private static final int	SHUT_WR		= 1;
+	private static final int	SHUT_RDWR	= 2;
+	
 	private static final int 	CS_UNINITIALIZED = 0;
 	private static final int 	CS_IDLE = 1;
 	private static final int 	CS_SYN_SENT = 2;
 	private static final int 	CS_SYN_RECV = 3;
 	private static final int 	CS_CONNECTED = 4;
 	private static final int 	CS_CONNECTED_FULL = 5;
-	private static final int 	CS_GOT_FIN = 6;
-	private static final int 	CS_DESTROY_DELAY = 7;
-	private static final int 	CS_FIN_SENT = 8;
-	private static final int 	CS_RESET = 9;
-	private static final int 	CS_DESTROY = 10;
+	private static final int 	CS_RESET = 6;
+	private static final int 	CS_DESTROY = 7;
 	
 	static final String statenames[] = {
-		"UNINITIALIZED", "IDLE","SYN_SENT","SYN_RECV","CONNECTED","CONNECTED_FULL","GOT_FIN","DESTROY_DELAY","FIN_SENT","RESET","DESTROY"
+		"UNINITIALIZED", "IDLE","SYN_SENT","SYN_RECV","CONNECTED","CONNECTED_FULL","RESET","DESTROY"
 	};
 	
 	/*
@@ -1987,11 +1991,16 @@ UTPTranslatedV2
 		}
 	};
 	
-	
+	private static long				socket_id_next;
+
 	
 	//struct UTPSocket {
 	//	~UTPSocket();
 	class UTPSocketImpl implements UTPSocket {
+		
+		final long 		socket_id;			// PARG added
+		UTPConnection	utp_connection;		// PARG added
+		
 			//PackedSockAddr addr;
 		InetSocketAddress addr;
 
@@ -2027,6 +2036,19 @@ UTPTranslatedV2
 
 		// Is a FIN packet in the reassembly buffer?
 		boolean got_fin;
+		// Have we reached the FIN?
+		boolean got_fin_reached;
+
+		// Have we sent our FIN?
+		boolean fin_sent;
+		// Has our fin been ACKed?
+		boolean fin_sent_acked;
+
+		// Reading is disabled
+		boolean read_shutdown;
+		// User called utp_close()
+		boolean close_requested;
+
 		// Timeout procedure
 		boolean fast_timeout;
 
@@ -2067,7 +2089,7 @@ UTPTranslatedV2
 		// from growing when we're not sending at capacity
 		long last_maxed_out_window;
 
-		Object userdata;
+		// Object userdata;
 
 		// Round trip time
 		int rtt;
@@ -2150,6 +2172,34 @@ UTPTranslatedV2
 		int ssthresh;
 
 		int close_reason;
+		
+		// PARG added a few methods
+		
+		UTPSocketImpl()
+		{
+			socket_id = socket_id_next++;
+		}
+		
+		public long
+		getID()
+		{
+			return( socket_id );
+		}
+		
+		@Override
+		public UTPConnection 
+		getUTPConnection()
+		{
+			return( utp_connection );
+		}
+		
+		@Override
+		public void 
+		setUTPConnection(
+			UTPConnection connection )
+		{
+			utp_connection = connection;
+		}
 		
 		/*
 		void log(int level, char const *fmt, ...)
@@ -2389,7 +2439,7 @@ UTPTranslatedV2
 
 		// we never need to send EACK for connections
 		// that are shutting down
-		if (reorder_count.i != 0 && state < CS_GOT_FIN) {
+		if (reorder_count.i != 0 && !got_fin_reached) {
 			// if reorder count > 0, send an EACK.
 			// reorder count should always be 0
 			// for synacks, so this should not be
@@ -2757,8 +2807,7 @@ UTPTranslatedV2
 		case CS_SYN_SENT:
 		case CS_SYN_RECV:			// https://github.com/bittorrent/libutp/commit/e81b42dad173ab2af3f26d13a2bc9ee59f1499da
 		case CS_CONNECTED_FULL:
-		case CS_CONNECTED:
-		case CS_FIN_SENT: {
+		case CS_CONNECTED: {
 
 			// Reset max window...
 			if ((int)(ctx.current_ms - zerowindow_time) >= 0 && max_window_user == 0) {
@@ -2814,7 +2863,7 @@ UTPTranslatedV2
 					// 4 consecutive transmissions have timed out. Kill it. If we
 					// haven't even connected yet, give up after only 2 consecutive
 					// failed transmissions.
-					if (state == CS_FIN_SENT)
+					if (close_requested)
 						state = CS_DESTROY;
 					else
 						state = CS_RESET;
@@ -2891,7 +2940,7 @@ UTPTranslatedV2
 			}
 
 				// https://github.com/bittorrent/libutp/commit/f9b969c8f4b6de094f8506b8eccaabbebcc386b5
-			if (state >= CS_CONNECTED && state < CS_GOT_FIN) {
+			if (state >= CS_CONNECTED && !fin_sent) {
 				if ((int)(ctx.current_ms - last_sent_packet) >= KEEPALIVE_INTERVAL) {
 					send_keep_alive();
 				}
@@ -2899,16 +2948,6 @@ UTPTranslatedV2
 			break;
 		}
 
-		// Close?
-		case CS_GOT_FIN:
-		case CS_DESTROY_DELAY:
-			if ((int)(ctx.current_ms - rto_timeout) >= 0) {
-				state = (state == CS_DESTROY_DELAY) ? CS_DESTROY : CS_RESET;
-				if (cur_window_packets.i > 0) {
-					utp_call_on_error(ctx, this, UTP_ECONNRESET);
-				}
-			}
-			break;
 		// prevent warning
 		case CS_UNINITIALIZED:
 		case CS_IDLE:
@@ -3945,13 +3984,16 @@ UTPTranslatedV2
 				else
 					utp_call_on_state_change(conn.ctx, conn, UTP_STATE_CONNECT);
 
-			// We've sent a fin, and everything was ACKed (including the FIN),
-			// it's safe to destroy the socket. cur_window_packets == acks
-			// means that this packet acked all the remaining packets that
-			// were in-flight.
-			} else if (conn.state == CS_FIN_SENT && conn.cur_window_packets.i == acks) {
-				conn.state = CS_DESTROY;
-			}
+				// We've sent a fin, and everything was ACKed (including the FIN).
+				// cur_window_packets == acks means that this packet acked all 
+				// the remaining packets that were in-flight.
+				} else if (conn.fin_sent && conn.cur_window_packets.i == acks) {
+					conn.fin_sent_acked = true;
+					if (conn.close_requested) {
+						conn.state = CS_DESTROY;
+					}
+				}
+			
 
 			// Update fast resend counter
 			if (wrapping_compare_less(conn.fast_resend_seq_nr.i
@@ -4085,8 +4127,7 @@ UTPTranslatedV2
 
 		// The connection is not in a state that can accept data?
 		if (conn.state != CS_CONNECTED &&
-			conn.state != CS_CONNECTED_FULL &&
-			conn.state != CS_FIN_SENT) {
+			conn.state != CS_CONNECTED_FULL ){
 			return 0;
 		}
 
@@ -4114,7 +4155,7 @@ UTPTranslatedV2
 		// Getting an in-order packet?
 		if (seqnr == 0) {
 			int count = packet_payload.remaining();
-			if (count > 0 && conn.state != CS_FIN_SENT) {
+			if (count > 0 && !conn.read_shutdown) {
 
 				//#if UTP_DEBUG_LOGGING
 				//conn->log(UTP_LOG_DEBUG, "Got Data len:%u (rb:%u)", (uint)count, (uint)utp_call_get_read_buffer_size(conn->ctx, conn));
@@ -4129,18 +4170,15 @@ UTPTranslatedV2
 			// in the reorder buffer.
 			while( true ){
 
-				if (conn.got_fin && conn.eof_pkt.i == conn.ack_nr.i ) {
-					if (conn.state != CS_FIN_SENT) {
-						conn.state = CS_GOT_FIN;
-						conn.rto_timeout = conn.ctx.current_ms + Math.min(conn.rto * 3, 60);
+				if (!conn.got_fin_reached && conn.got_fin && conn.eof_pkt.i == conn.ack_nr.i ) {
+					conn.got_fin_reached = true;					
+					conn.rto_timeout = conn.ctx.current_ms + Math.min(conn.rto * 3, 60);
 
+					//#if UTP_DEBUG_LOGGING
+					//conn->log(UTP_LOG_DEBUG, "Posting EOF");
+					//#endif
 
-						//#if UTP_DEBUG_LOGGING
-						//conn->log(UTP_LOG_DEBUG, "Posting EOF");
-						//#endif
-
-						utp_call_on_state_change(conn.ctx, conn, UTP_STATE_EOF);
-					}
+					utp_call_on_state_change(conn.ctx, conn, UTP_STATE_EOF);
 
 					// if the other end wants to close, ack
 					conn.send_ack();
@@ -4166,7 +4204,7 @@ UTPTranslatedV2
 				conn.inbuf.put(conn.ack_nr.i+1, null);
 				//count = *(uint*)p;
 				count = pending.remaining();
-				if (count > 0 && conn.state != CS_FIN_SENT) {
+				if (count > 0 && !conn.read_shutdown) {
 					// Pass the bytes to the upper layer
 					utp_call_on_read(conn.ctx, conn, pending, count);
 				}
@@ -4330,12 +4368,17 @@ UTPTranslatedV2
 
 		conn.state					= CS_UNINITIALIZED;
 		conn.ctx					= ctx;
-		conn.userdata				= null;
+		//conn.userdata				= null;
 		conn.reorder_count.set( 0 );
 		conn.duplicate_ack			= 0;
 		conn.timeout_seq_nr.set( 0 );
 		conn.last_rcv_win			= 0;
 		conn.got_fin				= false;
+		conn.got_fin_reached		= false;
+		conn.fin_sent				= false;
+		conn.fin_sent_acked			= false;
+		conn.read_shutdown			= false;
+		conn.close_requested		= false;
 		conn.fast_timeout			= false;
 		conn.rtt					= 0;
 		conn.retransmit_timeout		= 0;
@@ -4625,7 +4668,7 @@ UTPTranslatedV2
 				//ctx->log(UTP_LOG_DEBUG, NULL, "recv RST for existing connection");
 				//#endif
 
-				if (conn.state == CS_FIN_SENT)
+				if (conn.close_requested)
 					conn.state = CS_DESTROY;
 				else
 					conn.state = CS_RESET;
@@ -4958,6 +5001,13 @@ UTPTranslatedV2
 			return 0;
 		}
 
+		if (conn.fin_sent) {
+			//#if UTP_DEBUG_LOGGING
+			//conn->log(UTP_LOG_DEBUG, "UTP_Write %u bytes = false (fin_sent already)", (uint)bytes);
+			//#endif
+			return 0;
+		}
+		
 		conn.ctx.current_ms = utp_call_get_milliseconds(conn.ctx, conn);
 
 		// don't send unless it will all fit in the window
@@ -5190,8 +5240,6 @@ UTPTranslatedV2
 		if (conn==null) return;
 
 		assert(conn.state != CS_UNINITIALIZED
-			&& conn.state != CS_DESTROY_DELAY
-			&& conn.state != CS_FIN_SENT
 			&& conn.state != CS_DESTROY);
 
 		//#if UTP_DEBUG_LOGGING
@@ -5202,21 +5250,56 @@ UTPTranslatedV2
 		switch(conn.state) {
 		case CS_CONNECTED:
 		case CS_CONNECTED_FULL:
-			conn.state = CS_FIN_SENT;
-			conn.write_outgoing_packet(0, ST_FIN, null, 0);
+			conn.read_shutdown = true;
+			conn.close_requested = true;
+			if (!conn.fin_sent) {
+				conn.fin_sent = true;
+				conn.write_outgoing_packet(0, ST_FIN, null, 0);
+			} else if (conn.fin_sent_acked) {
+				conn.state = CS_DESTROY;
+			}
 			break;
 
 		case CS_SYN_SENT:
 			conn.rto_timeout = utp_call_get_milliseconds(conn.ctx, conn) + Math.min(conn.rto * 2, 60);
 			// fall through
-		case CS_GOT_FIN:
-			conn.state = CS_DESTROY_DELAY;
-			break;
 		case CS_SYN_RECV:
 			// fall through
 		default:
 			conn.state = CS_DESTROY;
 			break;
+		}
+	}
+	
+	void utp_shutdown(UTPSocketImpl conn, int how)
+	{
+		if(ASSERTS)_assert(conn);
+		if (conn==null) return;
+
+		assert(conn.state != CS_UNINITIALIZED
+			&& conn.state != CS_DESTROY);
+
+		//#if UTP_DEBUG_LOGGING
+		//conn->log(UTP_LOG_DEBUG, "UTP_shutdown(%d) in state:%s", how, statenames[conn->state]);
+		//#endif
+
+		if (how != SHUT_WR) {
+			conn.read_shutdown = true;
+		}
+		if (how != SHUT_RD) {
+			switch(conn.state) {
+			case CS_CONNECTED:
+			case CS_CONNECTED_FULL:
+				if (!conn.fin_sent) {
+					conn.fin_sent = true;
+					conn.write_outgoing_packet(0, ST_FIN, null, 0);
+				}
+				break;
+			case CS_SYN_SENT:
+				conn.rto_timeout = utp_call_get_milliseconds(conn.ctx, conn) +  Math.min(conn.rto * 2, 60);
+			default:
+				break;
+			}
 		}
 	}
 	
@@ -5306,6 +5389,7 @@ UTPTranslatedV2
 		return( utp_create_socket( global_ctx ));
 	}
 	
+	/*
 	public void
 	UTP_SetUserData(
 		UTPSocket				conn,
@@ -5315,6 +5399,7 @@ UTPTranslatedV2
 	{
 		((UTPSocketImpl)conn).userdata = user_data;
 	}
+	*/
 	
 	public void
 	UTP_Connect(
@@ -5514,5 +5599,11 @@ UTPTranslatedV2
 		}
 		
 		return( value );
+	}
+	
+	public int
+	UTP_GetSocketCount()
+	{
+		return( global_ctx.utp_sockets.size());
 	}
 }

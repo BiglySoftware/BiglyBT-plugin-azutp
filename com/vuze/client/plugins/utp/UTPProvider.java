@@ -25,6 +25,8 @@ package com.vuze.client.plugins.utp;
 
 import java.nio.ByteBuffer;
 
+import com.vuze.client.plugins.utp.loc.UTPSocket;
+
 public interface 
 UTPProvider 
 {
@@ -55,7 +57,7 @@ UTPProvider
 	public void
 	incomingIdle();
 	
-	public long[] 
+	public Object[] 
 	connect(
 		String		to_address,
 		int			to_port )
@@ -73,7 +75,7 @@ UTPProvider
 		
 	public boolean
 	write(
-		long			utp_socket,
+		UTPSocket		utp_socket,
 		ByteBuffer[]	buffers,
 		int				start,
 		int				len )
@@ -82,13 +84,13 @@ UTPProvider
 	
 	public void
 	receiveBufferDrained(
-		long		utp_socket )
+		UTPSocket		utp_socket )
 	
 		throws UTPProviderException;
 		
 	public void
 	close(
-		long		utp_socket,
+		UTPSocket	utp_socket,
 		int			close_reason )
 	
 		throws UTPProviderException;

@@ -104,12 +104,14 @@ UTPTranslated
 	
 		throws UTPProviderException;
 	
+	/*
 	public void
 	UTP_SetUserData(
 		UTPSocket				conn,
 		Object					user_data )
 	
 		throws UTPProviderException;
+	*/
 	
 	public void
 	UTP_Connect(
@@ -136,6 +138,9 @@ UTPTranslated
 		int						option,
 		int						value );
 	
+	public int
+	UTP_GetSocketCount();
+	
 		//
 
 	public interface 
@@ -153,7 +158,6 @@ UTPTranslated
 	{
 		public void
 		got_incoming_connection(
-			Object		user_data,
 			UTPSocket	socket );
 	}
 	
@@ -162,34 +166,34 @@ UTPTranslated
 	{
 		public void 
 		on_read(
-			Object 		userdata,
+			UTPSocket 	socket,
 			ByteBuffer 	bytes, 
 			int 		count );
 				
 		public int  
 		get_rb_size(
-			Object 		userdata );
+			UTPSocket 	socket );
 		
 		public void 
 		on_state(
-			Object 		userdata, 
+			UTPSocket 	socket, 
 			int 		state);
 		
 		public void 
 		on_error(
-			Object 		userdata, 
+			UTPSocket 	socket, 
 			int 		errcode );
 		
 		public void 
 		on_overhead(
-			Object 		userdata, 
+			UTPSocket 	socket, 
 			boolean 	send, 
 			int 		count, 
 			int 		type );
 		
 		public void 
 		on_close_reason(
-			Object 		userdata, 
+			UTPSocket 	socket, 
 			int 		state);
 		
 	}

@@ -48,13 +48,9 @@ UTPProviderLocal
 	private UTPTranslated		impl;
 	
 	private UTPProviderCallback		callback;
-	
-	private long				socket_id_next;
-	
+		
 		// all access to this is single threaded by caller
-	
-	private Map<Long,UTPSocket>		socket_map = new HashMap<Long, UTPSocket>();
-	
+		
 	private Map<Integer,Integer>	pending_options = new HashMap<Integer, Integer>();
 	
 	public 
@@ -118,7 +114,7 @@ UTPProviderLocal
 	public int
 	getSocketCount()
 	{
-		return( socket_map.size());
+		return( impl.UTP_GetSocketCount());
 	}
 	
 		// callbacks from implementation
@@ -134,109 +130,80 @@ UTPProviderLocal
 	
 	public void
 	got_incoming_connection(
-		Object		user_data,
 		UTPSocket	socket )
 	{
 		if ( Constants.IS_CVS_VERSION ){
 			callback.checkThread();
 		}
-		
-		long socket_id = socket_id_next++;
-			
-		socket_map.put( socket_id, socket );
-			
+					
 		// System.out.println( "socket_map: " + socket_map.size());
 		
 		InetSocketAddress[] addr_out = {null};
 		
 		impl.UTP_GetPeerName( socket, addr_out );
 		
-		callback.incomingConnection( addr_out[0], socket_id, impl.UTP_GetSocketConnectionID( socket ) & 0x0000ffffL );
-		
-		try{
-			impl.UTP_SetUserData( socket, new Object[]{ socket_id, socket });
-			
-		}catch( Throwable e ){
-			
-			Debug.out( e );
-		}
+		callback.incomingConnection( addr_out[0], socket, impl.UTP_GetSocketConnectionID( socket ) & 0x0000ffffL );
 	}
 	
 	public void 
 	on_read(
-		Object 		user_data,
+		UTPSocket	socket,
 		ByteBuffer 	bytes, 
 		int 		count )
 	{
-		long socket_id = (Long)((Object[])user_data)[0];
-
-		callback.read( socket_id, bytes );
+		callback.read( socket, bytes );
 	}
 		
 	public int  
 	get_rb_size(
-		Object 		user_data )
+		UTPSocket	socket )
 	{
-		long socket_id = (Long)((Object[])user_data)[0];
-
-		return( callback.getReadBufferSize( socket_id ));
+		return( callback.getReadBufferSize( socket ));
 	}
 	
 	public void 
 	on_state(
-		Object 		user_data, 
+		UTPSocket	socket, 
 		int 		state )
 	{
-		long socket_id = (Long)((Object[])user_data)[0];
-		
-		callback.setState(socket_id, state);
+		callback.setState( socket, state);
 		
 		if ( state == UTPTranslated.UTP_STATE_DESTROYING ){
 				
 			if ( Constants.IS_CVS_VERSION ){
 				callback.checkThread();
 			}
-			
-			socket_map.remove( socket_id);
-				
-			// System.out.println( "socket_map: " + socket_map.size());
 		}
 	}
 	
 	public void 
 	on_close_reason(
-		Object 		user_data, 
+		UTPSocket	socket, 
 		int 		reason )
 	{
-		long socket_id = (Long)((Object[])user_data)[0];
-		
-		callback.setCloseReason(socket_id, reason);
+		callback.setCloseReason(socket, reason);
 	}
 	
 	public void 
 	on_error(
-		Object 		user_data, 
+		UTPSocket	socket, 
 		int 		errcode )
 	{
-		long socket_id = (Long)((Object[])user_data)[0];
-		
-		callback.error( socket_id, errcode );
+		callback.error( socket, errcode );
 	}
 	
 	public void 
 	on_overhead(
-		Object user_data, 
-		boolean send, 
-		int count, 
-		int type)
+		UTPSocket	socket, 
+		boolean 	send, 
+		int 		count, 
+		int 		type)
 	{
-		long socket_id = (Long)((Object[])user_data)[0];
-		
-		callback.overhead( socket_id, send, count, type );
+		callback.overhead( socket, send, count, type );
 	}
 	
 	
-		// incoming calls from Vuze
+		// incoming calls from plugin
 	
 	public  void
 	checkTimeouts()
@@ -250,7 +217,7 @@ UTPProviderLocal
 		impl.UTP_IncomingIdle();
 	}
 	
-	public long[] 
+	public Object[] 
 	connect(
 		String		to_address,
 		int			to_port )
@@ -268,18 +235,10 @@ UTPProviderLocal
 			if ( Constants.IS_CVS_VERSION ){
 				callback.checkThread();
 			}
-
-			long socket_id = socket_id_next++;
-						
-			socket_map.put( socket_id, socket );
-				
-			// System.out.println( "socket_map: " + socket_map.size());
-			
-			impl.UTP_SetUserData( socket, new Object[]{ socket_id, socket });
-			
+																
 			impl.UTP_Connect( socket, new InetSocketAddress( HostNameToIPResolver.syncResolve( to_address), to_port ));
 			
-			return( new long[]{ socket_id, impl.UTP_GetSocketConnectionID( socket ) & 0x0000ffffL });
+			return( new Object[]{ socket, impl.UTP_GetSocketConnectionID( socket ) & 0x0000ffffL });
 			
 		}catch( UTPProviderException e ){
 			
@@ -311,7 +270,7 @@ UTPProviderLocal
 		
 	public boolean
 	write(
-		long			utp_socket,
+		UTPSocket		utp_socket,
 		ByteBuffer[]	buffers,
 		int				start,
 		int				len )
@@ -322,19 +281,12 @@ UTPProviderLocal
 			callback.checkThread();
 		}
 		
-		UTPSocket socket = socket_map.get( utp_socket );
-		
-		if ( socket != null ){
-			
-			return( impl.UTP_Write( socket, buffers, start, len ));
-		}
-		
-		throw( new UTPProviderException( "Unknown socket" ));
+		return( impl.UTP_Write( utp_socket, buffers, start, len ));
 	}
 	
 	public void
 	receiveBufferDrained(
-		long		utp_socket )
+		UTPSocket		utp_socket )
 	
 		throws UTPProviderException
 	{
@@ -342,21 +294,12 @@ UTPProviderLocal
 			callback.checkThread();
 		}
 		
-		UTPSocket socket = socket_map.get( utp_socket );
-		
-		if ( socket != null ){
-			
-			impl.UTP_RBDrained( socket );
-			
-		}else{
-		
-			throw( new UTPProviderException( "Unknown socket" ));
-		}
+		impl.UTP_RBDrained( utp_socket );
 	}
 		
 	public void
 	close(
-		long		utp_socket,
+		UTPSocket	utp_socket,
 		int			close_reason )
 	
 		throws UTPProviderException
@@ -365,14 +308,7 @@ UTPProviderLocal
 			callback.checkThread();
 		}
 		
-		UTPSocket socket = socket_map.remove( utp_socket );
-
-		// System.out.println( "socket_map: " + socket_map.size());
-		
-		if ( socket != null ){
-			
-			impl.UTP_Close( socket, close_reason );
-		}
+		impl.UTP_Close( utp_socket, close_reason );
 	}
 	
 	

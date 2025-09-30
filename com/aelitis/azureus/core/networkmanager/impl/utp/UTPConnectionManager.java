@@ -105,7 +105,7 @@ UTPConnectionManager
 
 	private AEThread2 									dispatch_thread;
 	private final LinkedBlockingQueue<AERunnable>		msg_queue = new LinkedBlockingQueue<>();
-	private final Average dispatch_rate	= Average.getInstance(1000, 10);
+	//private final Average dispatch_rate	= Average.getInstance(1000, 10);
 
 	private UTPSelector		selector;
 	
@@ -154,7 +154,7 @@ UTPConnectionManager
 							try{
 								AERunnable	target = msg_queue.take();
 								
-								dispatch_rate.addValue(1);
+								// dispatch_rate.addValue(1);
 								
 								try{
 									target.runSupport();
@@ -1029,11 +1029,13 @@ UTPConnectionManager
 		return( selector );
 	}
 	
+	/*
 	public long
 	getDispatchRate()
 	{
 		return( dispatch_rate.getAverage());
 	}
+	*/
 	
 	protected int
 	poll(
@@ -1048,6 +1050,7 @@ UTPConnectionManager
 				public void
 				runSupport()
 				{
+					//System.out.println( "poll");
 					utp_provider.checkTimeouts();
 					
 					//System.out.println("UTPProvider socket count=" +  utp_provider.getSocketCount());

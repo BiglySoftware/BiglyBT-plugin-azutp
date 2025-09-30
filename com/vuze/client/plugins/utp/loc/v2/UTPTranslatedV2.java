@@ -3454,7 +3454,7 @@ UTPTranslatedV2
 		// make sure that the congestion window is below max
 		// make sure that we don't shrink our window too small
 		//max_window = clamp<size_t>(max_window, MIN_WINDOW_SIZE, opt_sndbuf);
-		max_window = Math.min( max_window, Math.max( MIN_WINDOW_SIZE, opt_sndbuf));
+		max_window =  max_window<MIN_WINDOW_SIZE?MIN_WINDOW_SIZE:(max_window>opt_sndbuf?opt_sndbuf:max_window);
 		
 		// used in parse_log.py
 		/*

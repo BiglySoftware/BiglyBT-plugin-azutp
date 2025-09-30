@@ -32,7 +32,7 @@ import java.util.List;
 import com.biglybt.core.networkmanager.Transport;
 import com.biglybt.core.util.DisplayFormatters;
 import com.biglybt.core.util.SystemTime;
-import com.vuze.client.plugins.utp.loc.UTPSocket;
+import com.vuze.client.plugins.utp.UTPSocket;
 
 
 
@@ -95,7 +95,7 @@ UTPConnection
 		return( remote_address );
 	}
 	
-	protected UTPSocket
+	public UTPSocket
 	getSocket()
 	{
 		return( utp_socket );
@@ -224,7 +224,7 @@ UTPConnection
 		}
 	}
 	
-	protected boolean
+	public boolean
 	canWrite()
 	{
 		return( is_writable );

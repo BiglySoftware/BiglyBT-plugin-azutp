@@ -21,7 +21,7 @@
 
 
 
-package com.vuze.client.plugins.utp.loc;
+package com.vuze.client.plugins.utp;
 
 import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
 
@@ -37,4 +37,22 @@ UTPSocket
 	public void
 	setUTPConnection(
 		UTPConnection		connection );
+	
+	public int
+	getRTT();
+	
+	public long[]
+	getWindowsSizes();
+	
+	public long
+	getDataSendRate();
+	
+	public long 
+	getSendDataBufferSize();
+	
+	public long
+	getDataReceiveRate();
+	
+	public boolean[]
+	getFlags();
 }

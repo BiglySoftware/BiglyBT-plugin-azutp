@@ -27,6 +27,8 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
 import com.vuze.client.plugins.utp.UTPProviderException;
+import com.vuze.client.plugins.utp.UTPProviderStats;
+import com.vuze.client.plugins.utp.UTPSocket;
 
 
 public interface 
@@ -160,6 +162,9 @@ UTPTranslated
 		got_incoming_connection(
 			UTPSocket	socket );
 	}
+	
+	public UTPProviderStats
+	getStats();
 	
 	public interface 
 	UTPFunctionTable

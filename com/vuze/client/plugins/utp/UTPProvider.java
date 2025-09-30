@@ -25,8 +25,6 @@ package com.vuze.client.plugins.utp;
 
 import java.nio.ByteBuffer;
 
-import com.vuze.client.plugins.utp.loc.UTPSocket;
-
 public interface 
 UTPProvider 
 {
@@ -106,4 +104,7 @@ UTPProvider
 	setOption(
 		int		option,
 		int		value );
+	
+	public UTPProviderStats
+	getStats();
 }

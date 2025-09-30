@@ -39,6 +39,8 @@ import com.biglybt.pif.Plugin;
 import com.biglybt.pif.PluginInterface;
 import com.biglybt.pif.PluginListener;
 import com.biglybt.pif.logging.LoggerChannel;
+import com.biglybt.pif.ui.UIInstance;
+import com.biglybt.pif.ui.UIManagerListener;
 import com.biglybt.pif.ui.config.BooleanParameter;
 import com.biglybt.pif.ui.config.ConfigSection;
 import com.biglybt.pif.ui.config.IntParameter;
@@ -46,6 +48,7 @@ import com.biglybt.pif.ui.config.Parameter;
 import com.biglybt.pif.ui.model.BasicPluginConfigModel;
 import com.biglybt.plugin.upnp.UPnPMapping;
 import com.biglybt.plugin.upnp.UPnPPlugin;
+import com.vuze.client.plugins.utp.swt.UTPViewManager;
 
 public class 
 UTPPlugin
@@ -56,6 +59,8 @@ UTPPlugin
 	private boolean				logging_enabled;
 	private LoggerChannel		log;
 
+	private UTPViewManager			ui_view;
+	
 	private BooleanParameter	enabled_param;
 		
 	private UTPConnectionManager manager;
@@ -170,6 +175,38 @@ UTPPlugin
 			enabled_param.addEnabledOnSelection( send_buff_size );
 		}
 		
+		plugin_interface.getUIManager().addUIListener(
+				new UIManagerListener()
+				{
+					@Override
+					public void
+					UIAttached(
+						UIInstance		instance )
+					{
+						if ( instance.getUIType().equals(UIInstance.UIT_SWT) ){
+							
+							ui_view = new UTPViewManager( UTPPlugin.this, instance ); 
+
+						}
+					}
+
+					@Override
+					public void
+					UIDetached(
+						UIInstance		instance )
+					{
+						if ( instance.getUIType().equals(UIInstance.UIT_SWT) ){
+							
+							if (ui_view != null) {
+								
+								ui_view.unload();
+								
+								ui_view = null;
+							}
+						}
+					}
+				});
+		
 		plugin_interface.addListener(
 				new PluginListener()
 				{
@@ -214,6 +251,12 @@ UTPPlugin
 	getPluginInterface()
 	{
 		return( plugin_interface );
+	}
+	
+	public UTPConnectionManager
+	getConnectionManager()
+	{
+		return( manager );
 	}
 	
 	private void

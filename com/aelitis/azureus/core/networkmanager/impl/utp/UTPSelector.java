@@ -27,6 +27,7 @@ import java.util.*;
 import com.biglybt.core.config.COConfigurationManager;
 import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.AEThread2;
+import com.biglybt.core.util.Average;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.SystemTime;
 
@@ -43,6 +44,8 @@ UTPSelector
 	private LinkedList<Object[]>	ready_set	= new LinkedList<Object[]>();
 	private AESemaphore				ready_sem	= new AESemaphore( "UTPSelector" );
 	
+	private final Average select_rate	= Average.getInstance(1000, 10);
+
 	private volatile boolean destroyed;
 	
 	protected
@@ -84,6 +87,8 @@ UTPSelector
 						}
 						
 						if ( ready_sem.reserve( last_connection_count==0?1000:(SELECTOR_POLL_FREQUENCY/2 ))){
+							
+							select_rate.addValue(1);
 							
 							Object[]	entry;
 							
@@ -133,6 +138,12 @@ UTPSelector
 		thread.setPriority( Thread.MAX_PRIORITY-1 );
 		
 		thread.start();
+	}
+	
+	public long
+	getSelectRate()
+	{
+		return( select_rate.getAverage());
 	}
 	
 	protected void

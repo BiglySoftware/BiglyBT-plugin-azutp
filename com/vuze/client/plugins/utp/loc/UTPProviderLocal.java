@@ -34,18 +34,23 @@ import com.biglybt.core.util.HostNameToIPResolver;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderException;
+import com.vuze.client.plugins.utp.UTPProviderStats;
+import com.vuze.client.plugins.utp.UTPSocket;
 import com.vuze.client.plugins.utp.loc.v2.UTPTranslatedV2;
 
 
 public class 
 UTPProviderLocal
-	implements UTPProvider, 
-	UTPTranslated.SendToProc, 
-	UTPTranslated.UTPGotIncomingConnection, 
-	UTPTranslated.UTPFunctionTable
+	implements 
+		UTPProvider, 
+		UTPProviderStats,
+		UTPTranslated.SendToProc, 
+		UTPTranslated.UTPGotIncomingConnection, 
+		UTPTranslated.UTPFunctionTable
 {
 	private boolean				test_mode;
 	private UTPTranslated		impl;
+	private UTPProviderStats	impl_stats;
 	
 	private UTPProviderCallback		callback;
 		
@@ -57,6 +62,53 @@ UTPProviderLocal
 	UTPProviderLocal()
 	{
 		this( false );
+		
+		impl_stats = new UTPProviderStats(){
+			
+			@Override
+			public long getSentPacketCount(){
+				return 0;
+			}
+			
+			@Override
+			public long getReceivedPacketCount(){
+				return 0;
+			}
+			
+			@Override
+			public long getPacketReceiveRate(){
+				return 0;
+			}
+			@Override
+			public long getPacketSendRate(){
+				return 0;
+			}
+			
+			@Override
+			public long getDataSendTotal(){
+				return 0;
+			}
+			
+			@Override
+			public long getDataSendRate(){
+				return 0;
+			}
+			
+			@Override
+			public long getDataReceiveTotal(){
+				return 0;
+			}
+			
+			@Override
+			public long getDataReceiveRate(){
+				return 0;
+			}
+			
+			@Override
+			public long getOverheadRate(){
+				return 0;
+			}
+		};
 	}
 	
 	public 
@@ -82,6 +134,8 @@ UTPProviderLocal
 			callback	= _callback;
 			
 			impl = new UTPTranslatedV2( callback, this, this, this, test_mode );
+			
+			impl_stats = impl.getStats();
 			
 			if ( pending_options.size() > 0 ){
 				
@@ -337,5 +391,68 @@ UTPProviderLocal
 				impl.UTP_SetOption( option, value );
 			}
 		}
+	}
+	
+	@Override
+	public UTPProviderStats 
+	getStats()
+	{
+		return( this );
+	}
+	
+	public long
+	getSentPacketCount()
+	{
+		return( impl_stats.getSentPacketCount());
+	}
+	
+	public long
+	getReceivedPacketCount()
+	{
+		return( impl_stats.getReceivedPacketCount());
+	}
+
+	@Override
+	public long 
+	getPacketReceiveRate()
+	{
+		return( impl_stats.getPacketReceiveRate());
+	}
+	
+	@Override
+	public long 
+	getPacketSendRate()
+	{
+		return( impl_stats.getPacketSendRate());
+	}
+	
+	public long
+	getDataSendTotal()
+	{
+		return( impl_stats.getDataSendTotal());
+	}
+	
+	public long
+	getDataReceiveTotal()
+	{
+		return( impl_stats.getDataReceiveTotal());
+	}
+	
+	public long
+	getDataSendRate()
+	{
+		return( impl_stats.getDataSendRate());
+	}
+	
+	public long
+	getDataReceiveRate()
+	{
+		return( impl_stats.getDataReceiveRate());
+	}
+	
+	public long
+	getOverheadRate()
+	{
+		return( impl_stats.getOverheadRate());
 	}
 }

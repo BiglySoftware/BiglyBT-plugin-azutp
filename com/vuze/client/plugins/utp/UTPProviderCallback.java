@@ -27,8 +27,6 @@ import java.io.File;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
-import com.vuze.client.plugins.utp.loc.UTPSocket;
-
 public interface 
 UTPProviderCallback 
 {

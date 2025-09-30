@@ -25,6 +25,7 @@ package com.aelitis.azureus.core.networkmanager.impl.utp;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.io.File;
 import java.io.IOException;
@@ -38,7 +39,9 @@ import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
 import com.biglybt.core.util.AERunnable;
 import com.biglybt.core.util.AESemaphore;
+import com.biglybt.core.util.AEThread2;
 import com.biglybt.core.util.AsyncDispatcher;
+import com.biglybt.core.util.Average;
 import com.biglybt.core.util.ByteFormatter;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.CopyOnWriteList;
@@ -60,7 +63,7 @@ import com.vuze.client.plugins.utp.UTPPlugin;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderFactory;
-import com.vuze.client.plugins.utp.loc.UTPSocket;
+import com.vuze.client.plugins.utp.UTPSocket;
 
 
 public class 
@@ -100,14 +103,13 @@ UTPConnectionManager
 	
 	private IncomingConnectionManager	incoming_manager = IncomingConnectionManager.getSingleton();
 
-		// we don't want the dispatch thead to terminate on idle as we rely on all dispatcher
-		// invocations being strictly single-threaded to avoid locking etc
-	
-	private AsyncDispatcher	dispatcher = new AsyncDispatcher( "uTP:CM", Integer.MAX_VALUE );
-	
+	private AEThread2 									dispatch_thread;
+	private final LinkedBlockingQueue<AERunnable>		msg_queue = new LinkedBlockingQueue<>();
+	private final Average dispatch_rate	= Average.getInstance(1000, 10);
+
 	private UTPSelector		selector;
 	
-	private List<UTPConnection>							connections 			= new ArrayList<UTPConnection>();
+	private CopyOnWriteList<UTPConnection>				connections 			= new CopyOnWriteList<UTPConnection>();
 	private volatile int								connection_count;
 	
 	private Map<InetAddress,CopyOnWriteList<UTPConnection>>		address_connection_map 	= new ConcurrentHashMap<InetAddress, CopyOnWriteList<UTPConnection>>();
@@ -144,7 +146,40 @@ UTPConnectionManager
 	{
 		plugin		= _plugin;
 		
-		dispatcher.setPriority( Thread.MAX_PRIORITY - 1 );
+		dispatch_thread = 
+				AEThread2.createAndStartDaemon2( 
+					"uTP:CM", 
+					()->{
+						while( true ){
+							try{
+								AERunnable	target = msg_queue.take();
+								
+								dispatch_rate.addValue(1);
+								
+								try{
+									target.runSupport();
+									
+								}catch( Throwable e ){
+									
+									Debug.out( e );
+								}
+								
+							}catch( Throwable e ){
+								
+								try{
+									Thread.sleep( 1000 );
+									
+								}catch( Throwable f ){
+									
+									Debug.out( e );
+									
+									break;
+								}
+							}
+						}
+					});
+		
+		dispatch_thread.setPriority( Thread.MAX_PRIORITY - 1 );
 		
 		Set	types = new HashSet();
 		
@@ -181,6 +216,12 @@ UTPConnectionManager
 		}
 	}
 	
+	public UTPProvider
+	getProvider()
+	{
+		return( utp_provider );
+	}
+	
 	public int
 	getProviderVersion()
 	{
@@ -190,7 +231,7 @@ UTPConnectionManager
 	private void
 	checkThread()
 	{
-		if ( !dispatcher.isDispatchThread()){
+		if ( !dispatch_thread.isCurrentThread()){
 			
 			Debug.out( "eh" );
 		}
@@ -506,7 +547,7 @@ UTPConnectionManager
 	
 		final AESemaphore sem = new AESemaphore( "uTP:connect" );
 		
-		dispatcher.dispatch(
+		dispatch(
 				new AERunnable()
 				{
 					public void
@@ -716,7 +757,7 @@ UTPConnectionManager
 			
 		total_incoming_queued.addAndGet( length );
 		
-		dispatcher.dispatch(
+		dispatch(
 			new AERunnable()
 			{
 				public void
@@ -976,10 +1017,22 @@ UTPConnectionManager
 		}
 	}
 	
-	protected UTPSelector
+	public List<UTPConnection>
+	getConnections()
+	{
+		return( connections.getList());
+	}
+	
+	public UTPSelector
 	getSelector()
 	{
 		return( selector );
+	}
+	
+	public long
+	getDispatchRate()
+	{
+		return( dispatch_rate.getAverage());
 	}
 	
 	protected int
@@ -989,7 +1042,7 @@ UTPConnectionManager
 	{		
 			// called every 500ms or so
 		
-		dispatcher.dispatch(
+		dispatch(
 			new AERunnable()
 			{
 				public void
@@ -1051,7 +1104,7 @@ UTPConnectionManager
 		
 		final Object[] result = {null};
 		
-		dispatcher.dispatch(
+		dispatch(
 			new AERunnable()
 			{
 				public void
@@ -1152,14 +1205,14 @@ UTPConnectionManager
 	protected void
 	inputIdle()
 	{
-		dispatcher.dispatch( inputIdleDispatcher );
+		dispatch( inputIdleDispatcher );
 	}
 	
 	protected void
 	readBufferDrained(
 		final UTPConnection		c )
 	{
-		dispatcher.dispatch(
+		dispatch(
 			new AERunnable()
 			{
 				public void
@@ -1185,7 +1238,7 @@ UTPConnectionManager
 		String			r,
 		int				close_reason )
 	{
-		dispatcher.dispatch(
+		dispatch(
 			new AERunnable()
 			{
 				public void
@@ -1232,6 +1285,18 @@ UTPConnectionManager
 			});
 	}
 	
+	private final void
+	dispatch(
+		AERunnable	target )
+	{
+		try{
+			msg_queue.put(target);
+			
+		}catch( Throwable e ){
+			
+			Debug.out( "Failed to enqueue task", e );
+		}
+	}
 	public void
 	preferUTP(
 		boolean		b )

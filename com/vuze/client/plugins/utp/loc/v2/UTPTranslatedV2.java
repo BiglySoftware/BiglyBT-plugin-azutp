@@ -31,13 +31,15 @@ import java.util.*;
 
 import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
 import com.biglybt.core.util.AddressUtils;
+import com.biglybt.core.util.Average;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
 
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderException;
-import com.vuze.client.plugins.utp.loc.UTPSocket;
+import com.vuze.client.plugins.utp.UTPProviderStats;
+import com.vuze.client.plugins.utp.UTPSocket;
 import com.vuze.client.plugins.utp.loc.UTPTranslated;
 
 
@@ -46,8 +48,21 @@ import com.vuze.client.plugins.utp.loc.UTPTranslated;
 
 public class 
 UTPTranslatedV2
-	implements UTPTranslated
+	implements UTPTranslated, UTPProviderStats
 {
+	private final Average overall_packet_receive_rate	= Average.getInstance(1000, 10);
+	private final Average overall_packet_send_rate	= Average.getInstance(1000, 10);
+
+	private long overall_packet_received_count;
+	private long overall_packet_sent_count;
+	
+	private long overall_data_received_count;
+	private long overall_data_sent_count;
+	
+	private final Average overall_data_send_rate	= Average.getInstance(1000, 10);
+	private final Average overall_data_receive_rate = Average.getInstance(1000, 10);
+	private final Average overall_overhead_rate		= Average.getInstance(1000, 10);
+
 	private static final boolean ASSERTS = false;
 	
 	static{
@@ -397,6 +412,9 @@ UTPTranslatedV2
 
 	void utp_call_on_overhead_statistics(utp_context ctx, UTPSocketImpl socket, int send, int len, int type)
 	{
+		if ( type == retransmit_overhead ){
+			overall_overhead_rate.addValue( len );
+		}
 		if (ctx.callbacks[UTP_ON_OVERHEAD_STATISTICS]==null) return;
 		_utp_callback_arguments args = utp_callback_arguments;//new utp_callback_arguments();
 		args.callback_type = UTP_ON_OVERHEAD_STATISTICS;
@@ -2173,8 +2191,12 @@ UTPTranslatedV2
 
 		int close_reason;
 		
-		// PARG added a few methods
+		// PARG added a few methods etc
 		
+		
+		private final Average data_send_rate	= Average.getInstance(1000, 10);  //average over 10s, update every 1000ms
+		private final Average data_receive_rate = Average.getInstance(1000, 10);  //average over 10s, update every 1000ms
+
 		UTPSocketImpl()
 		{
 			socket_id = socket_id_next++;
@@ -2199,6 +2221,55 @@ UTPTranslatedV2
 			UTPConnection connection )
 		{
 			utp_connection = connection;
+		}
+		
+		@Override
+		public int 
+		getRTT()
+		{
+			return( rtt );
+		}
+		
+		@Override
+		public long[] 
+		getWindowsSizes()
+		{
+			return( new long[]{ max_window, max_window_user });
+		}
+		
+		public long
+		getDataSendRate()
+		{
+			return(data_send_rate.getAverage());
+		}
+		
+		public long
+		getDataReceiveRate()
+		{
+			return(data_receive_rate.getAverage());
+		}
+		
+		public long
+		getSendDataBufferSize()
+		{
+			long result = 0;
+			
+			Object[] elements = outbuf.elements;
+			
+			for ( Object pkt: elements ){
+				
+				if ( pkt != null ){
+					result += ((OutgoingPacket)pkt).length;
+				}
+			}
+			
+			return( result );
+		}
+		
+		public boolean[]
+		getFlags()
+		{
+			return( new boolean[]{ is_full(), state == CS_CONNECTED_FULL });
 		}
 		
 		/*
@@ -2350,12 +2421,12 @@ UTPTranslatedV2
 		}
 	}
 
-	void send_data(PacketFormatBase packet_header, byte[] packet_payload, int type)
+	void send_data(UTPSocketImpl conn, PacketFormatBase packet_header, byte[] packet_payload, int type)
 	{
-		send_data( packet_header, packet_payload, type, 0 );
+		send_data( conn, packet_header, packet_payload, type, 0 );
 	}
 
-	void send_data(PacketFormatBase packet_header, byte[] packet_payload, int type, int flags)
+	void send_data(UTPSocketImpl conn, PacketFormatBase packet_header, byte[] packet_payload, int type, int flags)
 	{		
 		// time stamp this packet with local time, the stamp goes into
 		// the header of every packet at the 8th byte for 8 bytes :
@@ -2412,7 +2483,7 @@ UTPTranslatedV2
 			seq_nr, ack_nr);
 	#endif
 	*/
-		send_to_addr(ctx, serialised_data, addr, flags);
+		send_to_addr( conn, ctx, serialised_data, addr, flags);
 		removeSocketFromAckList(this);
 	}
 
@@ -2480,7 +2551,7 @@ UTPTranslatedV2
 			//#endif
 		}
 
-		send_data(base, null, ack_overhead);
+		send_data(this, base, null, ack_overhead);
 		removeSocketFromAckList(this);
 	}
 
@@ -2555,7 +2626,7 @@ UTPTranslatedV2
 	 	}
 
 		pkt.transmissions++;
-		send_data(pkt.packet_header, pkt.packet_payload,
+		send_data(this,pkt.packet_header, pkt.packet_payload,
 			(state == CS_SYN_SENT) ? connect_overhead
 			: (pkt.transmissions == 1) ? payload_bandwidth
 			: retransmit_overhead, use_as_mtu_probe ? UTP_UDP_DONTFRAG : 0);
@@ -3454,21 +3525,32 @@ UTPTranslatedV2
 	
 	} // **** PARG - END OF UTPSocketImpl
 	
-	void send_to_addr(utp_context ctx, byte[] p, InetSocketAddress addr )
+	void send_to_addr(UTPSocketImpl conn, utp_context ctx, byte[] p, InetSocketAddress addr )
 	{
-		send_to_addr( ctx, p, addr, 0 );
+		send_to_addr( conn, ctx, p, addr, 0 );
 	}
-	void send_to_addr(utp_context ctx, byte[] p, InetSocketAddress addr, int flags )
+	void send_to_addr(UTPSocketImpl conn, utp_context ctx, byte[] p, InetSocketAddress addr, int flags )
 	{
 		//socklen_t tolen;
 		//SOCKADDR_STORAGE to = addr.get_sockaddr_storage(&tolen);
 		int len = p.length;
-		utp_register_sent_packet(ctx, len);
+		utp_register_sent_packet( conn, ctx, len);
 		utp_call_sendto(ctx, null, p, len, addr, flags);
 	}
 	
-	void utp_register_sent_packet(utp_context ctx, int length)
+	void utp_register_sent_packet(UTPSocketImpl conn, utp_context ctx, int length)
 	{
+		overall_packet_sent_count++;
+		
+		overall_packet_send_rate.addValue(1);
+
+		overall_data_sent_count += length;
+		
+		overall_data_send_rate.addValue(length);
+		if ( conn != null ){
+			conn.data_send_rate.addValue( length );
+		}
+		
 		if (length <= PACKET_SIZE_MID) {
 			if (length <= PACKET_SIZE_EMPTY){
 				ctx.context_stats._nraw_send[PACKET_SIZE_EMPTY_BUCKET]++;
@@ -3486,6 +3568,16 @@ UTPTranslatedV2
 	
 	void utp_register_recv_packet(UTPSocketImpl conn, int len)
 	{
+		overall_packet_received_count++;
+		
+		overall_packet_receive_rate.addValue(1);
+
+		overall_data_received_count += len;
+		
+		overall_data_receive_rate.addValue(len);
+		
+		conn.data_receive_rate.addValue( len );
+		
 		//#ifdef _DEBUG
 		//++conn->_stats.nrecv;
 		//conn->_stats.nbytes_recv += len;
@@ -3529,7 +3621,7 @@ UTPTranslatedV2
 
 //		LOG_DEBUG("%s: Sending RST id:%u seq_nr:%u ack_nr:%u", addrfmt(addr, addrbuf), conn_id_send, seq_nr, ack_nr);
 //		LOG_DEBUG("send %s len:%u id:%u", addrfmt(addr, addrbuf), (uint)len, conn_id_send);
-		send_to_addr(ctx, pfb.serialise(), addr);
+		send_to_addr(null,ctx, pfb.serialise(), addr);
 	}
 
 	// Process an incoming packet
@@ -5605,5 +5697,74 @@ UTPTranslatedV2
 	UTP_GetSocketCount()
 	{
 		return( global_ctx.utp_sockets.size());
+	}
+	
+	
+	public UTPProviderStats
+	getStats()
+	{
+		return( this );
+	}
+	
+	@Override
+	public long 
+	getReceivedPacketCount()
+	{
+		return( overall_packet_received_count );
+	}
+	
+	@Override
+	public long 
+	getSentPacketCount()
+	{
+		return( overall_packet_sent_count );
+	}
+	
+	@Override
+	public long
+	getPacketSendRate()
+	{
+		return(overall_packet_send_rate.getAverage());
+	}
+
+	@Override
+	public long
+	getPacketReceiveRate()
+	{
+		return(overall_packet_receive_rate.getAverage());
+	}
+	
+	
+	@Override
+	public long 
+	getDataReceiveTotal()
+	{
+		return( overall_data_received_count );
+	}
+	
+	@Override
+	public long 
+	getDataSendTotal()
+	{
+		return( overall_data_sent_count );
+	}
+	
+	public long
+	getDataSendRate()
+	{
+		return(overall_data_send_rate.getAverage());
+	}
+	
+	public long
+	getDataReceiveRate()
+	{
+		return(overall_data_receive_rate.getAverage());
+	}
+	
+	@Override
+	public long 
+	getOverheadRate()
+	{
+		return(overall_overhead_rate.getAverage());
 	}
 }

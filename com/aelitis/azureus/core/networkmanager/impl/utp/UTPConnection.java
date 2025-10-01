@@ -62,6 +62,7 @@ UTPConnection
 	private int					last_write_buff	= -1;
 	private int					last_write		= -1;
 	
+	private int					write_pending;
 	private long				close_time;
 	
 	private boolean				close_reason_set;
@@ -200,6 +201,12 @@ UTPConnection
 		}
 	}
 	
+	public int
+	getSendPendingSize()
+	{
+		return( write_pending );
+	}
+	
 	protected boolean
 	canRead()
 	{
@@ -260,6 +267,8 @@ UTPConnection
 		
 		last_write	= written;
 		
+		write_pending = max - written;
+				
 		// System.out.println( "Connection(" + getID() + ") - write -> " + written );
 		
 		return( written );

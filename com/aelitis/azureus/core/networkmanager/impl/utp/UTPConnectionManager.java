@@ -26,6 +26,9 @@ package com.aelitis.azureus.core.networkmanager.impl.utp;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.LinkedTransferQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.io.File;
 import java.io.IOException;
@@ -40,8 +43,6 @@ import com.biglybt.core.logging.Logger;
 import com.biglybt.core.util.AERunnable;
 import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.AEThread2;
-import com.biglybt.core.util.AsyncDispatcher;
-import com.biglybt.core.util.Average;
 import com.biglybt.core.util.ByteFormatter;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.CopyOnWriteList;
@@ -104,7 +105,7 @@ UTPConnectionManager
 	private IncomingConnectionManager	incoming_manager = IncomingConnectionManager.getSingleton();
 
 	private AEThread2 									dispatch_thread;
-	private final LinkedBlockingQueue<AERunnable>		msg_queue = new LinkedBlockingQueue<>();
+	private final LinkedBlockingQueue<DispatchTask>		msg_queue = new LinkedBlockingQueue<>();
 	//private final Average dispatch_rate	= Average.getInstance(1000, 10);
 
 	private UTPSelector		selector;
@@ -132,14 +133,14 @@ UTPConnectionManager
 	
 	private int					current_local_port;
 	
+	private AtomicBoolean		inputIdlePending = new AtomicBoolean( false );
+	
 	private boolean	available;
 		
 	private boolean	prefer_utp;
 	
 	private UTPProvider	utp_provider = UTPProviderFactory.createProvider();
-	
-	private volatile AESemaphore poll_waiter;
-	
+		
 	public
 	UTPConnectionManager(
 		UTPPlugin		_plugin )
@@ -152,7 +153,7 @@ UTPConnectionManager
 					()->{
 						while( true ){
 							try{
-								AERunnable	target = msg_queue.take();
+								DispatchTask	target = msg_queue.take();
 								
 								// dispatch_rate.addValue(1);
 								
@@ -334,7 +335,7 @@ UTPConnectionManager
 						
 						public void
 						incomingConnection(
-							InetSocketAddress	adress,
+							InetSocketAddress	address,
 							UTPSocket			utp_socket,
 							long				con_id )
 						{
@@ -344,12 +345,12 @@ UTPConnectionManager
 							
 							init_sem.reserve();
 							
-							accept( current_local_port, adress,	utp_socket, con_id );
+							accept( current_local_port, address,	utp_socket, con_id );
 						}
 												
-						public boolean
+						public void
 						send(
-							InetSocketAddress	adress,
+							InetSocketAddress	address,
 							byte[]				buffer,
 							int					length )
 						{
@@ -359,7 +360,18 @@ UTPConnectionManager
 							
 							packet_sent_count++;
 							
-							return( plugin.send( current_local_port, adress, buffer, length ));
+							if ( length != buffer.length ){
+								
+								Debug.out( "optimise this" );
+								
+								byte[] temp = new byte[length];
+								
+								System.arraycopy(buffer, 0, temp, 0, length );
+								
+								buffer = temp;
+							}
+							
+							dispatchSend( address, buffer, length );
 						}
 						
 						public void
@@ -548,10 +560,10 @@ UTPConnectionManager
 		final AESemaphore sem = new AESemaphore( "uTP:connect" );
 		
 		dispatch(
-				new AERunnable()
+				new DispatchTask( "connect" )
 				{
 					public void
-					runSupport()
+					runTask()
 				  	{
 						current_local_port = transport.getLocalPort();
 						
@@ -758,10 +770,10 @@ UTPConnectionManager
 		total_incoming_queued.addAndGet( length );
 		
 		dispatch(
-			new AERunnable()
+			new DispatchTask( "receive" )
 			{
 				public void
-				runSupport()
+				runTask()
 			  	{
 					current_local_port = local_port;
 											
@@ -975,14 +987,7 @@ UTPConnectionManager
 			}
 		}
 		
-		AESemaphore sem = poll_waiter;
-		
-		if ( sem != null ){
-			
-			poll_waiter = null;
-			
-			sem.release();
-		}
+		selector.wakeup();
 		
 		return( new_connection );
 	}
@@ -1039,16 +1044,15 @@ UTPConnectionManager
 	
 	protected int
 	poll(
-		AESemaphore		wait_sem,
 		long			now )
 	{		
 			// called every 500ms or so
 		
 		dispatch(
-			new AERunnable()
+			new DispatchTask( "poll" )
 			{
 				public void
-				runSupport()
+				runTask()
 				{
 					//System.out.println( "poll");
 					utp_provider.checkTimeouts();
@@ -1086,11 +1090,6 @@ UTPConnectionManager
 		
 		int result =  connection_count;
 		
-		if ( result == 0 ){
-			
-			poll_waiter = wait_sem;
-		}
-		
 		return( result );
 	}
 			
@@ -1108,10 +1107,10 @@ UTPConnectionManager
 		final Object[] result = {null};
 		
 		dispatch(
-			new AERunnable()
+			new DispatchTask( "write" )
 			{
 				public void
-				runSupport()
+				runTask()
 				{
 					boolean	log_error = true;
 
@@ -1189,26 +1188,31 @@ UTPConnectionManager
 		throw((IOException)result[0]);
 	}
 	
-	private AERunnable inputIdleDispatcher =
-		new AERunnable()
-		{
-			public void
-			runSupport()
-			{
-				try{
-					utp_provider.incomingIdle();
-						
-				}catch( Throwable e ){
-					
-					Debug.out( e );
-				}
-			}
-		};
-		
 	protected void
 	inputIdle()
 	{
-		dispatch( inputIdleDispatcher );
+		if ( !inputIdlePending.compareAndSet( false, true )){
+			
+			return;
+		}
+		
+		dispatch( 
+			new DispatchTask( "inputIdle" )
+			{
+				public void
+				runTask()
+				{
+					inputIdlePending.set( false );
+					
+					try{
+						utp_provider.incomingIdle();
+							
+					}catch( Throwable e ){
+						
+						Debug.out( e );
+					}
+				}
+			});
 	}
 	
 	protected void
@@ -1216,10 +1220,10 @@ UTPConnectionManager
 		final UTPConnection		c )
 	{
 		dispatch(
-			new AERunnable()
+			new DispatchTask( "readDrained")
 			{
 				public void
-				runSupport()
+				runTask()
 				{
 					if ( !c.isUnusable()){
 						
@@ -1242,10 +1246,10 @@ UTPConnectionManager
 		int				close_reason )
 	{
 		dispatch(
-			new AERunnable()
+			new DispatchTask( "close" )
 			{
 				public void
-				runSupport()
+				runTask()
 				{
 					boolean	async_close = false;
 		
@@ -1290,7 +1294,7 @@ UTPConnectionManager
 	
 	private final void
 	dispatch(
-		AERunnable	target )
+		DispatchTask	target )
 	{
 		try{
 			msg_queue.put(target);
@@ -1300,6 +1304,152 @@ UTPConnectionManager
 			Debug.out( "Failed to enqueue task", e );
 		}
 	}
+	
+	private void
+	dispatchSend(
+		InetSocketAddress	address,
+		byte[]				buffer,
+		int					length )
+	{
+		plugin.send( current_local_port, address, buffer, length );
+	}
+	
+	/*
+	LinkedBlockingQueue<AERunnable> send_queue = new LinkedBlockingQueue<>();
+	
+	{
+		for ( int i=0;i<8;i++){
+			AEThread2 send_thread = 
+					AEThread2.createAndStartDaemon2( 
+						"uTP:CM", 
+						()->{
+							while( true ){
+								try{
+									AERunnable task = send_queue.take();
+									
+									if ( task != null ){
+										
+										task.runSupport();
+									}
+								}catch( Throwable e ){
+									
+									try{
+										Thread.sleep( 1000 );
+										
+									}catch( Throwable f ){
+										
+										Debug.out( e );
+										
+										break;
+									}
+								}
+							}
+						});
+			
+			
+				send_thread.setPriority( Thread.MAX_PRIORITY - 1 );
+		}
+	}
+	*/
+	
+	/*
+	List<Object[]>	pending_sends = new ArrayList<>();
+	
+	private void
+	dispatchSend(
+		InetSocketAddress	address,
+		byte[]				buffer,
+		int					length )
+	{
+		// send operations can take a while so we want to get them off the main dispatch
+		// thread to avoid blocking other operations such as packet reception
+	
+		if ( length != 0 ){
+			if ( length ==  0 ){
+				plugin.send( current_local_port, address, buffer, length );
+			
+			}else{
+				//System.out.println( send_queue.size());
+				send_queue.add( 
+					new AERunnable()
+					{
+						public void
+						runSupport()
+						{
+							plugin.send( current_local_port, address, buffer, length );
+						}
+					});
+			}
+		}else{
+			pending_sends.add( new Object[]{ address, buffer, length });
+		}
+	}
+	
+	private void
+	dispatchSends()
+	{
+		try{
+	
+				// send operations can take a while so we want to get them off the main dispatch
+				// thread to avoid blocking other operations such as packet reception
+			
+			if ( pending_sends ==  null ){
+				
+				for ( Object[] entry: pending_sends ){
+					plugin.send( current_local_port, (InetSocketAddress)entry[0], (byte[])entry[1], (int)entry[2] );
+				}
+				
+			}else{
+				
+				List<Object[]> ps = new ArrayList<>( pending_sends );
+				
+				send_queue.add( 
+					new AERunnable()
+					{
+						public void
+						runSupport()
+						{
+							for ( Object[] entry: ps ){
+								plugin.send( current_local_port, (InetSocketAddress)entry[0], (byte[])entry[1], (int)entry[2] );
+							}
+						}
+					});
+			}
+		}finally{
+			
+			pending_sends.clear();
+		}
+	}
+	*/
+	
+	/*
+	 * 	private void
+	dispatchSend(
+		InetSocketAddress	address,
+		byte[]				buffer,
+		int					length )
+	{
+			// send operations can take a while so we want to get them off the main dispatch
+			// thread to avoid blocking other operations such as packet reception
+		
+		if ( length ==  0 ){
+			plugin.send( current_local_port, address, buffer, length );
+		
+		}else{
+			System.out.println( send_queue.size());
+			send_queue.add( 
+				new AERunnable()
+				{
+					public void
+					runSupport()
+					{
+						plugin.send( current_local_port, address, buffer, length );
+					}
+				});
+		}
+	}
+	 */
+	
 	public void
 	preferUTP(
 		boolean		b )
@@ -1332,5 +1482,56 @@ UTPConnectionManager
 		String		str )
 	{
 		plugin.log( str );
+	}
+	
+	long dispatch_id = 0;
+	
+	abstract class
+	DispatchTask
+		extends AERunnable
+	{
+		final String	name;
+		
+		// final long queued = SystemTime.getHighPrecisionCounter();
+		
+		DispatchTask(
+			String 	_name )
+		{
+			name	= _name;
+		}
+		
+		public abstract void
+		runTask();
+		
+		public void
+		runSupport()
+		{
+			try{
+				/*
+				long start = SystemTime.getHighPrecisionCounter();
+				
+				long delay = start - queued;
+				
+				if ( delay > 1000000 ){
+					
+					System.out.println( name + ": delay: " + delay );
+				}
+				*/
+				runTask();
+				/*
+				long end = SystemTime.getHighPrecisionCounter();
+				
+				long elapsed = end - start;
+						
+				if ( elapsed > 1000000 ){
+					
+					System.out.println( name + ": took " + elapsed );
+				}
+				*/
+			}finally{
+				
+				//dispatchSends();
+			}
+		}
 	}
 }

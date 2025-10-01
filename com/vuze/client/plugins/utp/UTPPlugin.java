@@ -317,17 +317,6 @@ UTPPlugin
 		byte[]				buffer,
 		int					length )
 	{
-		if ( length != buffer.length ){
-			
-			Debug.out( "optimise this" );
-			
-			byte[] temp = new byte[length];
-			
-			System.arraycopy(buffer, 0, temp, 0, length );
-			
-			buffer = temp;
-		}
-		
 		if ( local_port == default_handler.getPort() || local_port == 0 ){
 		
 			return( default_handler.send( to, buffer ));

@@ -64,6 +64,7 @@ import com.biglybt.ui.swt.pif.UISWTView;
 import com.biglybt.ui.swt.pif.UISWTViewBuilder;
 import com.biglybt.ui.swt.pif.UISWTViewEvent;
 import com.biglybt.ui.swt.pif.UISWTViewEventListener;
+import com.biglybt.ui.swt.shells.GCStringPrinter;
 import com.vuze.client.plugins.utp.UTPPlugin;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderStats;
@@ -503,15 +504,20 @@ UTPViewManager
 				
 				if ( num_connections > 0 ){
 					
-					int[]		rtt_snap		= new int[ num_connections ];
-					long[][]	windows_snap	= new long[ num_connections][];
-					long[]		data_queued		= new long[ num_connections ];
-					boolean[][] flags_snap		= new boolean[ num_connections ][];
+					int[]		rtt_snap			= new int[ num_connections ];
+					long[][]	windows_snap		= new long[ num_connections][];
+					long[]		data_queued_snap	= new long[ num_connections ];
+					int[]		data_pending_snap	= new int[ num_connections ];
+					boolean[][] flags_snap			= new boolean[ num_connections ][];
 					
-					int	max_rtt		= 1000;
-					int max_window	= 64*1024;
-					int max_window2	= 64*1024;
-					long max_queued	= 32*1024;
+					int	max_rtt		= 0;
+					int max_window	= 0;
+					int max_window2	= 0;
+					long max_queued	= 0;
+					int	max_pending	= 0;
+					
+					long total_queued = 0;
+					long total_pending = 0;
 					
 					for ( int i=0;i<num_connections; i++ ){
 						
@@ -534,9 +540,19 @@ UTPViewManager
 
 						long queued = socket.getSendDataBufferSize();
 					
+						total_queued += queued;
+						
 						max_queued = Math.max( max_queued, queued );
 						
-						data_queued[i] = queued;
+						data_queued_snap[i] = queued;
+						
+						int pending = connection.getSendPendingSize();
+						
+						total_pending += pending;
+						
+						max_pending = Math.max( max_pending, pending);
+						
+						data_pending_snap[i] = pending;
 						
 						boolean[] flags = socket.getFlags();
 												
@@ -555,50 +571,110 @@ UTPViewManager
 					if ( connection_width > 32 ){
 						
 						connection_width = 32;
+						
+					}else if ( connection_width < 2 ){
+						
+						connection_width = 2;
 					}
 					
-					int data_height = height / 4;
+					String[] headers = 
+						{	"Total Connections: " + connections.size(),
+							"Window Max = " + DisplayFormatters.formatByteCountToKiBEtc( max_window ),
+							"Sending Total: " + DisplayFormatters.formatByteCountToKiBEtc( total_queued ) + ", Max: " + DisplayFormatters.formatByteCountToKiBEtc( max_queued ),
+							"Pending Total: " + DisplayFormatters.formatByteCountToKiBEtc( total_pending ) + ", Max: " + DisplayFormatters.formatByteCountToKiBEtc( max_pending ),
+							"RTT Max: " + max_rtt,
+							"Flags"
+						};
 					
+					int header_height = 0;
+					
+					for ( String header: headers ){
+						header_height = Math.max( header_height, GCStringPrinter.stringExtent(gc, header ).y);
+					}
+					
+					int border = 4;
+					
+					int all_headers_height = ( header_height + 2*border) * headers.length;
+										
+					int v_pos = border;
+									
+						// total
+					
+					GCStringPrinter.printString(gc, headers[0], new Rectangle(border, v_pos, width, header_height ));
+
+					v_pos += header_height + border;
+					
+						// data entries
+					
+					int num_data = 5;
+					
+					int data_height = ( height - all_headers_height ) / num_data;
+
+					int[] data_ys = new int[num_data];
+
+					for ( int i=0;i<num_data;i++){
+						
+						GCStringPrinter.printString(gc, headers[i+1], new Rectangle(border, v_pos, width, header_height ));
+
+						v_pos += header_height + border;
+						
+						data_ys[i] = v_pos + data_height;
+						
+						v_pos += data_height + border;
+					}
+										
 					for ( int i=0;i<num_connections; i++ ){
 						
 						int			rtt		= rtt_snap[i];
 						long[]		windows = windows_snap[i];
-						long		queued	= data_queued[i];
+						long		queued	= data_queued_snap[i];
+						long		pending	= data_pending_snap[i];
 						boolean[]	flags	= flags_snap[i];
 						
+							// Window
+						
 						gc.setBackground( Colors.fadedGreen );
+												
+						int h = max_window==0?0:( data_height * (int)windows[0] ) / max_window;
 						
-						int h_start = data_height;
-						
-						int h = ( h_start * (int)windows[0] ) / max_window;
-						
-						gc.fillRectangle( connection_width*i,  h_start - h, connection_width-1, h);
+						gc.fillRectangle( connection_width*i,  data_ys[0] - h, connection_width-1, h);
 
+							// Queued
+						
 						gc.setBackground( Colors.fadedRed );
+														
+						h = max_queued==0?0:(int)( ( data_height * queued ) / max_queued );
 						
-						h_start += data_height + 4;
+						gc.fillRectangle( connection_width*i,  data_ys[1] - h, connection_width-1, h);
 						
-						h = (int)( ( data_height * queued ) / max_queued );
+							// Pending
 						
-						gc.fillRectangle( connection_width*i,  h_start - h, connection_width-1, h);
+						h = max_pending==0?0:(int)( ( data_height * pending ) / max_pending );
+						
+						gc.fillRectangle( connection_width*i,  data_ys[2] - h, connection_width-1, h);
+						
+							// RTT
 						
 						gc.setBackground( Colors.bluesFixed[Colors.BLUES_MIDDARK]);
+												
+						h = max_rtt==0?0:( data_height * rtt ) / max_rtt;
 						
-						h_start += data_height+ 4 ;
+						gc.fillRectangle( connection_width*i,  data_ys[3] - h, connection_width-1, h);
 						
-						h = ( data_height * rtt ) / max_rtt;
-						
-						gc.fillRectangle( connection_width*i,  h_start - h, connection_width-1, h);
+							// Flags
 						
 						gc.setBackground( Colors.orange );
 						
-						h_start += connection_width+ 4;
+						int h_start = data_ys[4] - data_height + connection_width;
 						
 						h = connection_width;
 
-						for ( boolean b: flags ){
-							
+						for ( int j=0;j<flags.length;j++){
+							boolean b = flags[j];
 							if ( b ){
+								if ( j == 2 ){
+									gc.setBackground( Colors.fadedGreen );
+								}
 								gc.fillRectangle( connection_width*i,  h_start - h, connection_width-1, h);
 							}
 							

@@ -23,11 +23,11 @@
 package com.aelitis.azureus.core.networkmanager.impl.utp;
 
 import java.util.*;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 import com.biglybt.core.config.COConfigurationManager;
-import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.AEThread2;
-import com.biglybt.core.util.Average;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.SystemTime;
 
@@ -41,8 +41,7 @@ UTPSelector
 	
 	private AEThread2	thread;
 	
-	private LinkedList<Object[]>	ready_set	= new LinkedList<Object[]>();
-	private AESemaphore				ready_sem	= new AESemaphore( "UTPSelector" );
+	private LinkedBlockingQueue<Object[]>	ready_set	= new LinkedBlockingQueue<Object[]>();
 	
 	//private final Average select_rate	= Average.getInstance(1000, 10);
 
@@ -76,33 +75,24 @@ UTPSelector
 						
 						if ( now - last_poll >= MANAGER_POLL_FREQUENCY ){
 							
-							last_connection_count = manager.poll( ready_sem, now );
+							last_connection_count = manager.poll( now );
 							
 							last_poll	= now;
 						}
 						
-						if ( ready_sem.getValue() == 0 ){
+						if ( ready_set.isEmpty()){
 							
 							manager.inputIdle();
 						}
 						
-						if ( ready_sem.reserve( last_connection_count==0?1000:(SELECTOR_POLL_FREQUENCY/2 ))){
-							
-							// select_rate.addValue(1);
-							
-							Object[]	entry;
-							
-							synchronized( ready_set ){
+						try{
+							Object[] entry = ready_set.poll( last_connection_count==0?1000:(SELECTOR_POLL_FREQUENCY/2 ), TimeUnit.MILLISECONDS );
 								
-								if ( ready_set.isEmpty()){
-																		
-									continue;
-								}
-								
-								entry = ready_set.removeFirst();
+							if ( entry == null || entry.length == 0 ){
+										
+								continue;
 							}
 							
-						
 							TransportHelper	transport 	= (TransportHelper)entry[0];
 							
 							TransportHelper.selectListener	listener = (TransportHelper.selectListener)entry[1];
@@ -129,6 +119,19 @@ UTPSelector
 									
 									Debug.printStackTrace(e);
 								}
+							}
+						}catch( InterruptedException e ){
+							
+							Debug.out( e );
+							
+							try{
+								Thread.sleep(1000);
+								
+							}catch( Throwable f ){
+								
+								Debug.out( f );
+								
+								break;
 							}
 						}
 					}
@@ -158,48 +161,42 @@ UTPSelector
 	}	
 
 	protected void
+	wakeup()
+	{
+		ready_set.offer( new Object[0] );
+	}
+	
+	protected void
 	ready(
 		TransportHelper						transport,
 		TransportHelper.selectListener		listener,
 		Object								attachment )
 	{
-		boolean	removed = false;
-		
-		synchronized( ready_set ){
-
-			if ( destroyed ){
-				
-				Debug.out( "Selector has been destroyed" );
-				
-				throw( new RuntimeException( "Selector has been destroyed" ));
-			}
+		if ( destroyed ){
 			
-			if ( !ready_set.isEmpty()){
+			Debug.out( "Selector has been destroyed" );
+			
+			throw( new RuntimeException( "Selector has been destroyed" ));
+		}
+		
+		if ( !ready_set.isEmpty()){
+			
+			Iterator<Object[]>	it = ready_set.iterator();
+			
+			while( it.hasNext()){
+			
+				Object[]	entry = (Object[])it.next();
 				
-				Iterator<Object[]>	it = ready_set.iterator();
-				
-				while( it.hasNext()){
-				
-					Object[]	entry = (Object[])it.next();
+				if ( entry.length >= 2 &&  entry[1] == listener ){
 					
-					if ( entry[1] == listener ){
-						
-						it.remove();
-						
-						removed	= true;
-						
-						break;
-					}
+					it.remove();
+										
+					break;
 				}
 			}
-			
-			ready_set.addLast( new Object[]{ transport, listener, attachment });
 		}
 		
-		if ( !removed ){
-			
-			ready_sem.release();
-		}
+		ready_set.offer( new Object[]{ transport, listener, attachment });
 	}
 	
 	protected void
@@ -209,43 +206,31 @@ UTPSelector
 		Object								attachment,
 		Throwable							error )
 	{
-		boolean	removed = false;
-		
-		synchronized( ready_set ){
-
-			if ( destroyed ){
+		if ( destroyed ){
+			
+			Debug.out( "Selector has been destroyed" );
+			
+			throw( new RuntimeException( "Selector has been destroyed" ));
+		}
+	
+		if ( !ready_set.isEmpty()){
+			
+			Iterator<Object[]>	it = ready_set.iterator();
+			
+			while( it.hasNext()){
+			
+				Object[]	entry = it.next();
 				
-				Debug.out( "Selector has been destroyed" );
-				
-				throw( new RuntimeException( "Selector has been destroyed" ));
-			}
-		
-			if ( !ready_set.isEmpty()){
-				
-				Iterator<Object[]>	it = ready_set.iterator();
-				
-				while( it.hasNext()){
-				
-					Object[]	entry = it.next();
+				if ( entry.length >= 2 &&  entry[1] == listener ){
 					
-					if ( entry[1] == listener ){
-						
-						it.remove();
-						
-						removed	= true;
-						
-						break;
-					}
+					it.remove();
+										
+					break;
 				}
 			}
-			
-			ready_set.addLast( new Object[]{ transport, listener, attachment, error });
 		}
 		
-		if ( !removed ){
-			
-			ready_sem.release();
-		}
+		ready_set.offer( new Object[]{ transport, listener, attachment, error });
 	}
 	
 	protected void
@@ -253,22 +238,19 @@ UTPSelector
 		TransportHelper						transport,
 		TransportHelper.selectListener		listener )
 	{
-		synchronized( ready_set ){
-		
-			if ( !ready_set.isEmpty()){
+		if ( !ready_set.isEmpty()){
+			
+			Iterator<Object[]>	it = ready_set.iterator();
+			
+			while( it.hasNext()){
+			
+				Object[]	entry = it.next();
 				
-				Iterator<Object[]>	it = ready_set.iterator();
-				
-				while( it.hasNext()){
-				
-					Object[]	entry = it.next();
+				if ( entry.length >= 2 &&  entry[0] == transport && entry[1] == listener ){
 					
-					if ( entry[0] == transport && entry[1] == listener ){
-						
-						it.remove();
-											
-						break;
-					}
+					it.remove();
+										
+					break;
 				}
 			}
 		}

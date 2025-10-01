@@ -71,7 +71,7 @@ UTPProviderCallback
 		UTPSocket	utp_socket,
 		long		con_id );
 	
-	public boolean
+	public void
 	send(
 		InetSocketAddress	address,
 		byte[]				buffer,

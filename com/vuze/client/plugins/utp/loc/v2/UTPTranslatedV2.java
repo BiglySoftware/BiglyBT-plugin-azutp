@@ -29,6 +29,7 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import com.aelitis.azureus.core.networkmanager.impl.utp.AverageNoSync;
 import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
 import com.biglybt.core.util.AddressUtils;
 import com.biglybt.core.util.Average;
@@ -50,8 +51,8 @@ public class
 UTPTranslatedV2
 	implements UTPTranslated, UTPProviderStats
 {
-	private final Average overall_packet_receive_rate	= Average.getInstance(1000, 10);
-	private final Average overall_packet_send_rate	= Average.getInstance(1000, 10);
+	private final AverageNoSync overall_packet_receive_rate	= AverageNoSync.getInstance(1000, 10);
+	private final AverageNoSync overall_packet_send_rate	= AverageNoSync.getInstance(1000, 10);
 
 	private long overall_packet_received_count;
 	private long overall_packet_sent_count;
@@ -59,9 +60,9 @@ UTPTranslatedV2
 	private long overall_data_received_count;
 	private long overall_data_sent_count;
 	
-	private final Average overall_data_send_rate	= Average.getInstance(1000, 10);
-	private final Average overall_data_receive_rate = Average.getInstance(1000, 10);
-	private final Average overall_overhead_rate		= Average.getInstance(1000, 10);
+	private final AverageNoSync overall_data_send_rate		= AverageNoSync.getInstance(1000, 10);
+	private final AverageNoSync overall_data_receive_rate	= AverageNoSync.getInstance(1000, 10);
+	private final AverageNoSync overall_overhead_rate		= AverageNoSync.getInstance(1000, 10);
 
 	private static final boolean ASSERTS = false;
 	
@@ -2194,8 +2195,8 @@ UTPTranslatedV2
 		// PARG added a few methods etc
 		
 		
-		private final Average data_send_rate	= Average.getInstance(1000, 10);  //average over 10s, update every 1000ms
-		private final Average data_receive_rate = Average.getInstance(1000, 10);  //average over 10s, update every 1000ms
+		private final AverageNoSync data_send_rate		= AverageNoSync.getInstance(1000, 10);  //average over 10s, update every 1000ms
+		private final AverageNoSync data_receive_rate	= AverageNoSync.getInstance(1000, 10);  //average over 10s, update every 1000ms
 
 		UTPSocketImpl()
 		{
@@ -2317,6 +2318,7 @@ UTPTranslatedV2
 		// If we can, decay max window, returns true if we actually did so
 		void maybe_decay_win(long current_ms)
 		{
+			//int old_max = max_window;
 			if (can_decay_win( current_ms)) {
 				// TCP uses 0.5
 				max_window = (int)(max_window * .5);
@@ -2326,6 +2328,9 @@ UTPTranslatedV2
 				slow_start = false;
 				ssthresh = max_window;
 			}
+			//if ( max_window < old_max ){
+			//	Debug.out( old_max + " -> " + max_window  );
+			//}
 		}
 
 		int get_header_size() //const
@@ -2957,15 +2962,26 @@ UTPTranslatedV2
 						// idling. No need to be aggressive about resetting the
 						// congestion window. Just let it decay by a 3:rd.
 						// don't set it any lower than the packet size though
+						//int old_max = max_window;
 						max_window = Math.max(max_window * 2 / 3, (int)(packet_size));
+						//Debug.out( old_max + " -> " + max_window  );
 					} else {
 						// our delay was so high that our congestion window
 						// was shrunk below one packet, preventing us from
 						// sending anything for one time-out period. Now, reset
 						// the congestion window to fit one packet, to start over
 						// again
-						max_window = packet_size;
-						slow_start = true;
+						
+						// PARG - changed to decay by 1/2 if window not < packet_size
+						if ( max_window < packet_size ){
+							//Debug.out( max_window + " -> " + packet_size  );
+							max_window = packet_size;
+							slow_start = true;
+						}else{
+							//int old_max = max_window;
+							max_window = Math.max(max_window /2 , (int)(packet_size));
+							//Debug.out( old_max + " -> " + max_window  );
+						}
 					}
 				}
 
@@ -3434,6 +3450,8 @@ UTPTranslatedV2
 
 		int ledbat_cwnd = (int)((max_window + scaled_gain < MIN_WINDOW_SIZE)?MIN_WINDOW_SIZE:max_window + scaled_gain );
 
+		// int old_max = max_window;
+		
 		if (slow_start) {
 			int ss_cwnd = (int)( max_window + window_factor*get_packet_size());
 			if (ss_cwnd > ssthresh) {
@@ -3450,11 +3468,14 @@ UTPTranslatedV2
 			max_window = ledbat_cwnd;
 		}
 
-
 		// make sure that the congestion window is below max
 		// make sure that we don't shrink our window too small
 		//max_window = clamp<size_t>(max_window, MIN_WINDOW_SIZE, opt_sndbuf);
 		max_window =  max_window<MIN_WINDOW_SIZE?MIN_WINDOW_SIZE:(max_window>opt_sndbuf?opt_sndbuf:max_window);
+		
+		//if ( max_window < old_max ){
+		//	Debug.out( old_max + " -> " + max_window  );
+		//}
 		
 		// used in parse_log.py
 		/*

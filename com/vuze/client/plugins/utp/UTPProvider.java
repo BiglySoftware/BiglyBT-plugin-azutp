@@ -28,8 +28,8 @@ import java.nio.ByteBuffer;
 public interface 
 UTPProvider 
 {
-	public static final int DEFAULT_RECV_BUFFER_KB	= 1024;
-	public static final int DEFAULT_SEND_BUFFER_KB	= 1024;
+	public static final int DEFAULT_RECV_BUFFER_KB	= 2048;
+	public static final int DEFAULT_SEND_BUFFER_KB	= 2048;
 	
 	public static final int OPT_RECEIVE_BUFFER	= 1;
 	public static final int OPT_SEND_BUFFER		= 2;

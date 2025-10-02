@@ -495,7 +495,12 @@ UTPViewManager
 				boolean dark_mode =  Utils.isDarkAppearanceNative();
 				
 				gc.setBackground( dark_mode?connections_canvas.getBackground():Colors.white);
-			
+				
+				if ( dark_mode ){
+					
+					gc.setForeground( connections_canvas.getForeground());
+				}
+				
 				gc.fillRectangle( 0, 0, width, height );
 				
 				List<UTPConnection> connections = connection_manager.getConnections();

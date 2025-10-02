@@ -180,7 +180,7 @@ UTPConnectionManager
 						}
 					});
 		
-		dispatch_thread.setPriority( Thread.MAX_PRIORITY - 1 );
+		dispatch_thread.setPriority( Thread.MAX_PRIORITY );
 		
 		Set	types = new HashSet();
 		

@@ -36,7 +36,9 @@ import com.biglybt.core.networkmanager.impl.TransportHelper;
 public class 
 UTPSelector 
 {
-	private static final int MANAGER_POLL_FREQUENCY		= 250;
+	private static final boolean DIRECT_CALLS = false;	// true currently causes deadlocks in connection establishment
+	
+	private static final int MANAGER_POLL_FREQUENCY		= 500;
 	private static final int SELECTOR_POLL_FREQUENCY	= COConfigurationManager.getIntParameter( "network.utp.poll.time", 50 );
 	
 	private AEThread2	thread;
@@ -172,6 +174,13 @@ UTPSelector
 		TransportHelper.selectListener		listener,
 		Object								attachment )
 	{
+		if ( DIRECT_CALLS ){
+			
+			listener.selectSuccess(transport, attachment);
+			
+			return;
+		}
+		
 		if ( destroyed ){
 			
 			Debug.out( "Selector has been destroyed" );
@@ -206,6 +215,13 @@ UTPSelector
 		Object								attachment,
 		Throwable							error )
 	{
+		if ( DIRECT_CALLS ){
+			
+			listener.selectFailure(transport, attachment, error);
+			
+			return;
+		}
+		
 		if ( destroyed ){
 			
 			Debug.out( "Selector has been destroyed" );
@@ -238,6 +254,11 @@ UTPSelector
 		TransportHelper						transport,
 		TransportHelper.selectListener		listener )
 	{
+		if ( DIRECT_CALLS ){
+			
+			return;
+		}
+		
 		if ( !ready_set.isEmpty()){
 			
 			Iterator<Object[]>	it = ready_set.iterator();

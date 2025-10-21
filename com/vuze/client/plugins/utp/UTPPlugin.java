@@ -140,40 +140,37 @@ UTPPlugin
 		manager.preferUTP(prefer_utp_param.getValue());
 		
 		enabled_param.addEnabledOnSelection( prefer_utp_param );
-
-		if ( manager.getProviderVersion() > 1 ){
 			
-			final IntParameter recv_buff_size = config.addIntParameter2( "utp.recv.buff", "utp.recv.buff", UTPConnectionManager.DEFAULT_RECV_BUFFER_KB, 0, 5*1024 );
-			final IntParameter send_buff_size = config.addIntParameter2( "utp.send.buff", "utp.send.buff", UTPConnectionManager.DEFAULT_SEND_BUFFER_KB, 0, 5*1024 );
-			
-			recv_buff_size.addListener(
-					new com.biglybt.pif.ui.config.ParameterListener()
-					{
-						public void 
-						parameterChanged(
-							Parameter param )
-						{
-							manager.setReceiveBufferSize( recv_buff_size.getValue());
-						}
-					});
-					
-			send_buff_size.addListener(
-					new com.biglybt.pif.ui.config.ParameterListener()
-					{
-						public void 
-						parameterChanged(
-							Parameter param )
-						{
-							manager.setSendBufferSize( recv_buff_size.getValue());
-						}
-					});
-			
-			manager.setReceiveBufferSize( recv_buff_size.getValue());
-			manager.setSendBufferSize( send_buff_size.getValue());
+		final IntParameter recv_buff_size = config.addIntParameter2( "utp.recv.buff", "utp.recv.buff", UTPConnectionManager.DEFAULT_RECV_BUFFER_KB, 0, 5*1024 );
+		final IntParameter send_buff_size = config.addIntParameter2( "utp.send.buff", "utp.send.buff", UTPConnectionManager.DEFAULT_SEND_BUFFER_KB, 0, 5*1024 );
 		
-			enabled_param.addEnabledOnSelection( recv_buff_size );
-			enabled_param.addEnabledOnSelection( send_buff_size );
-		}
+		recv_buff_size.addListener(
+				new com.biglybt.pif.ui.config.ParameterListener()
+				{
+					public void 
+					parameterChanged(
+						Parameter param )
+					{
+						manager.setReceiveBufferSize( recv_buff_size.getValue());
+					}
+				});
+				
+		send_buff_size.addListener(
+				new com.biglybt.pif.ui.config.ParameterListener()
+				{
+					public void 
+					parameterChanged(
+						Parameter param )
+					{
+						manager.setSendBufferSize( recv_buff_size.getValue());
+					}
+				});
+		
+		manager.setReceiveBufferSize( recv_buff_size.getValue());
+		manager.setSendBufferSize( send_buff_size.getValue());
+	
+		enabled_param.addEnabledOnSelection( recv_buff_size );
+		enabled_param.addEnabledOnSelection( send_buff_size );
 		
 		plugin_interface.getUIManager().addUIListener(
 				new UIManagerListener()

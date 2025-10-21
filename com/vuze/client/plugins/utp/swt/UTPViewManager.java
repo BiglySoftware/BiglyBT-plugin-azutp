@@ -78,8 +78,7 @@ UTPViewManager
 	
 	final private UTPPlugin				plugin;
 	final private UTPConnectionManager	connection_manager;
-	final private UTPProvider			provider;
-	final private UTPProviderStats		provider_stats;
+	final private UTPProviderStats[]	provider_stats;
 	
 	final private UISWTInstance		ui_instance;	
 	
@@ -99,9 +98,13 @@ UTPViewManager
 		
 		connection_manager = plugin.getConnectionManager();
 		
-		provider = connection_manager.getProvider();
+		UTPProvider[] providers = connection_manager.getProviders();
 		
-		provider_stats = provider.getStats();
+		provider_stats = new UTPProviderStats[ providers.length ];
+		
+		for ( int i=0;i<providers.length;i++ ){
+			provider_stats[i] = providers[i].getStats();
+		}
 		
 		ui_instance.registerView(UISWTInstance.VIEW_MAIN,
 				ui_instance.createViewBuilder( VIEW_ID ).setListenerInstantiator(
@@ -723,25 +726,51 @@ UTPViewManager
 				return;
 			}
 
-			lblReceivedPackets.setText(String.valueOf( provider_stats.getReceivedPacketCount()));
-			lblSentPackets.setText(String.valueOf( provider_stats.getSentPacketCount()));
+			long received_packets	= 0;
+			long sent_packets		= 0;
+			long data_receive_total	= 0;
+			long data_send_total	= 0;
 			
-			lblReceivedBytes.setText( DisplayFormatters.formatByteCountToKiBEtc( provider_stats.getDataReceiveTotal()));
-			lblSentBytes.setText( DisplayFormatters.formatByteCountToKiBEtc( provider_stats.getDataSendTotal()));
+			long packet_receive_rate	= 0;
+			long packet_send_rate		= 0;
+			long data_receive_rate		= 0;
+			long data_send_rate			= 0;
+			long overhead_rate			= 0;
 			
-			packetInGraph.addIntValue((int)provider_stats.getPacketReceiveRate());
+			for ( UTPProviderStats stats: provider_stats ){
+				
+				received_packets	+= stats.getReceivedPacketCount();
+				sent_packets		+= stats.getSentPacketCount();
+				data_receive_total	+= stats.getDataReceiveTotal();
+				data_send_total		+= stats.getDataSendTotal();
+				
+				packet_receive_rate	+= stats.getPacketReceiveRate();
+				packet_send_rate	+= stats.getPacketSendRate();
+				data_receive_rate	+= stats.getDataReceiveRate();
+				data_send_rate		+= stats.getDataSendRate();
+				overhead_rate		+= stats.getOverheadRate();
+			}
 			
-			packetOutGraph.addIntValue((int)provider_stats.getPacketSendRate());
+			lblReceivedPackets.setText(String.valueOf( received_packets ));
+			lblSentPackets.setText(String.valueOf( sent_packets));
+			
+			lblReceivedBytes.setText( DisplayFormatters.formatByteCountToKiBEtc( data_receive_total));
+			
+			lblSentBytes.setText( DisplayFormatters.formatByteCountToKiBEtc( data_send_total));
+			
+			packetInGraph.addIntValue((int)packet_receive_rate );
+			
+			packetOutGraph.addIntValue((int)packet_send_rate);
 
-	    	dataInGraph.addIntValue((int)provider_stats.getDataReceiveRate());
+	    	dataInGraph.addIntValue((int)data_receive_rate);
 	    	
-	    	dataOutGraph.addIntValue((int)provider_stats.getDataSendRate());
+	    	dataOutGraph.addIntValue((int)data_send_rate);
 	    	
 	    	// dataInGraph.addIntValue((int)connection_manager.getDispatchRate());
 	    	
 	    	// dataOutGraph.addIntValue((int)connection_manager.getSelector().getSelectRate());
 	    	
-	    	overheadGraph.addIntValue((int)provider_stats.getOverheadRate());
+	    	overheadGraph.addIntValue((int)overhead_rate );
 		}
 		
 		void

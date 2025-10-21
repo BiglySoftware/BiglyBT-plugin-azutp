@@ -28,11 +28,11 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 import com.aelitis.azureus.core.networkmanager.impl.utp.AverageNoSync;
 import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
 import com.biglybt.core.util.AddressUtils;
-import com.biglybt.core.util.Average;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
 
@@ -340,7 +340,7 @@ UTPTranslatedV2
 	};
 	
 	// single threaded so optimise away object creation
-	private static _utp_callback_arguments utp_callback_arguments = new _utp_callback_arguments();
+	private _utp_callback_arguments utp_callback_arguments = new _utp_callback_arguments();
 	
 	//typedef uint64 utp_callback_t(utp_callback_arguments *);
 
@@ -2010,7 +2010,7 @@ UTPTranslatedV2
 		}
 	};
 	
-	private static long				socket_id_next;
+	private static AtomicLong 		socket_id_next = new AtomicLong();
 
 	
 	//struct UTPSocket {
@@ -2200,7 +2200,7 @@ UTPTranslatedV2
 
 		UTPSocketImpl()
 		{
-			socket_id = socket_id_next++;
+			socket_id = socket_id_next.incrementAndGet();
 		}
 		
 		public long

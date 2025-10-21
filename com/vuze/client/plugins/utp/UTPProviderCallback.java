@@ -23,7 +23,6 @@
 
 package com.vuze.client.plugins.utp;
 
-import java.io.File;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
@@ -35,12 +34,6 @@ UTPProviderCallback
 	public static final int STATE_EOF 			= 3;
 	public static final int STATE_DESTROYING 	= 4;
 
-	public File
-	getPluginUserDir();
-	
-	public File
-	getPluginInstallDir();
-	
 	public void
 	log(
 		String		str,
@@ -60,16 +53,9 @@ UTPProviderCallback
 	
 	public void
 	incomingConnection(
-		String		address,
-		int			port,
-		UTPSocket	utp_socket,
-		long		con_id );
-	
-	public void
-	incomingConnection(
 		InetSocketAddress	address,
-		UTPSocket	utp_socket,
-		long		con_id );
+		UTPSocket			utp_socket,
+		long				con_id );
 	
 	public void
 	send(

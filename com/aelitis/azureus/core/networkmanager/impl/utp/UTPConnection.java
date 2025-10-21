@@ -39,10 +39,13 @@ import com.vuze.client.plugins.utp.UTPSocket;
 public class 
 UTPConnection 
 {
-	private final UTPConnectionManager	manager;
-	private final UTPSocket				utp_socket;
-	private final InetSocketAddress		remote_address;
-	private final long					con_id;
+	private final UTPConnectionManager		manager;
+	private final UTPConnectionProcessor	processor;
+	private final UTPSocket					utp_socket;
+	private final InetSocketAddress			remote_address;
+	private final long						con_id;
+	
+	
 	private UTPTransportHelper		transport;
 	
 	private List<ByteBuffer>	read_buffers = new LinkedList<ByteBuffer>();
@@ -72,6 +75,7 @@ UTPConnection
 		UTPConnectionManager	_manager,
 		InetSocketAddress		_remote_address,
 		UTPTransportHelper		_transport,		// null for incoming
+		UTPConnectionProcessor	_processor,
 		UTPSocket				_utp_socket,
 		long					_con_id )
 		
@@ -79,6 +83,7 @@ UTPConnection
 		manager			= _manager;
 		remote_address	= _remote_address;
 		transport		= _transport;
+		processor		= _processor;
 		utp_socket		= _utp_socket;
 		con_id			= _con_id;
 		
@@ -94,6 +99,12 @@ UTPConnection
 	getRemoteAddress()
 	{
 		return( remote_address );
+	}
+	
+	public UTPConnectionProcessor
+	getProcessor()
+	{
+		return( processor );
 	}
 	
 	public UTPSocket

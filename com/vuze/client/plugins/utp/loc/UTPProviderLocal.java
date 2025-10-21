@@ -151,12 +151,6 @@ UTPProviderLocal
 		}
 	}
 	
-	public int
-	getVersion()
-	{
-		return( 2 );
-	}
-	
 	public boolean
 	isValidPacket(
 		byte[]		data,

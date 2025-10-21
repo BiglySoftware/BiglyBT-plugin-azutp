@@ -25,12 +25,6 @@ package com.aelitis.azureus.core.networkmanager.impl.utp;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.LinkedTransferQueue;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.io.File;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -40,17 +34,10 @@ import java.nio.ByteBuffer;
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
-import com.biglybt.core.util.AERunnable;
 import com.biglybt.core.util.AESemaphore;
-import com.biglybt.core.util.AEThread2;
-import com.biglybt.core.util.ByteFormatter;
-import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.CopyOnWriteList;
 import com.biglybt.core.util.Debug;
-import com.biglybt.core.util.IdentityHashSet;
-import com.biglybt.core.util.SystemTime;
-import com.biglybt.pif.PluginInterface;
-
+import com.biglybt.core.util.RandomUtils;
 import com.biglybt.core.networkmanager.ConnectionEndpoint;
 import com.biglybt.core.networkmanager.ProtocolEndpoint;
 import com.biglybt.core.networkmanager.ProtocolEndpointFactory;
@@ -62,8 +49,6 @@ import com.biglybt.core.stats.CoreStats;
 import com.biglybt.core.stats.CoreStatsProvider;
 import com.vuze.client.plugins.utp.UTPPlugin;
 import com.vuze.client.plugins.utp.UTPProvider;
-import com.vuze.client.plugins.utp.UTPProviderCallback;
-import com.vuze.client.plugins.utp.UTPProviderFactory;
 import com.vuze.client.plugins.utp.UTPSocket;
 
 
@@ -102,85 +87,45 @@ UTPConnectionManager
 	
 	private UTPPlugin				plugin;
 	
-	private IncomingConnectionManager	incoming_manager = IncomingConnectionManager.getSingleton();
-
-	private AEThread2 									dispatch_thread;
-	private final LinkedBlockingQueue<DispatchTask>		msg_queue = new LinkedBlockingQueue<>();
-	//private final Average dispatch_rate	= Average.getInstance(1000, 10);
+	private final IncomingConnectionManager	incoming_manager = IncomingConnectionManager.getSingleton();
 
 	private UTPSelector		selector;
 	
-	private CopyOnWriteList<UTPConnection>				connections 			= new CopyOnWriteList<UTPConnection>();
+	private final CopyOnWriteList<UTPConnection>		connections 			= new CopyOnWriteList<UTPConnection>();
 	private volatile int								connection_count;
 	
-	private Map<InetAddress,CopyOnWriteList<UTPConnection>>		address_connection_map 	= new ConcurrentHashMap<InetAddress, CopyOnWriteList<UTPConnection>>();
-	
-	//private Map<Long,UTPConnection>								socket_connection_map 	= new HashMap<Long, UTPConnection>();
-	
-	private Set<UTPConnection>							closing_connections		= new IdentityHashSet<UTPConnection>();
-		
-	private static final long	MAX_INCOMING_QUEUED			= 4*1024*1024;
-	private static final long	MAX_INCOMING_QUEUED_LOG_OK	= MAX_INCOMING_QUEUED - 256*1024;
-	
+	private final Map<InetAddress,CopyOnWriteList<UTPConnection>>		address_connection_map 	= new ConcurrentHashMap<InetAddress, CopyOnWriteList<UTPConnection>>();
+					
 	public static final int	DEFAULT_RECV_BUFFER_KB		= UTPProvider.DEFAULT_RECV_BUFFER_KB;
 	public static final int	DEFAULT_SEND_BUFFER_KB		= UTPProvider.DEFAULT_SEND_BUFFER_KB;
-	
-	private AtomicLong			total_incoming_queued = new AtomicLong();
-	private volatile int		total_incoming_queued_log_state;
-	
-	private volatile long		packet_sent_count;
-	private volatile long		packet_received_count;
-	
+		
 	private int					current_local_port;
-	
-	private AtomicBoolean		inputIdlePending = new AtomicBoolean( false );
-	
+		
 	private boolean	available;
 		
-	private boolean	prefer_utp;
+	private long	packet_received_count;
+	private long	packet_sent_count;
 	
-	private UTPProvider	utp_provider = UTPProviderFactory.createProvider();
+	private boolean	prefer_utp;
 		
+	private final int							NUM_PROCESSORS = 3;
+	private final UTPConnectionProcessor[]		processors;
+	private final UTPProvider[]					providers;
+	
 	public
 	UTPConnectionManager(
 		UTPPlugin		_plugin )
 	{
 		plugin		= _plugin;
 		
-		dispatch_thread = 
-				AEThread2.createAndStartDaemon2( 
-					"uTP:CM", 
-					()->{
-						while( true ){
-							try{
-								DispatchTask	target = msg_queue.take();
-								
-								// dispatch_rate.addValue(1);
-								
-								try{
-									target.runSupport();
-									
-								}catch( Throwable e ){
-									
-									Debug.out( e );
-								}
-								
-							}catch( Throwable e ){
-								
-								try{
-									Thread.sleep( 1000 );
-									
-								}catch( Throwable f ){
-									
-									Debug.out( e );
-									
-									break;
-								}
-							}
-						}
-					});
+		processors	= new UTPConnectionProcessor[NUM_PROCESSORS];
+		providers	= new UTPProvider[ NUM_PROCESSORS ];
 		
-		dispatch_thread.setPriority( Thread.MAX_PRIORITY );
+		for ( int i=0; i<NUM_PROCESSORS; i++ ){
+			
+			processors[i]	= new UTPConnectionProcessor( this, i+1 );
+			providers[i]	= processors[i].getProvider();
+		}
 		
 		Set	types = new HashSet();
 		
@@ -213,29 +158,20 @@ UTPConnectionManager
 		}
 		if ( types.contains( ST_NET_UTP_SOCKET_COUNT )){
 
-			values.put( ST_NET_UTP_SOCKET_COUNT, new Long( utp_provider.getSocketCount()));
-		}
-	}
-	
-	public UTPProvider
-	getProvider()
-	{
-		return( utp_provider );
-	}
-	
-	public int
-	getProviderVersion()
-	{
-		return( utp_provider.getVersion());
-	}
-	
-	private void
-	checkThread()
-	{
-		if ( !dispatch_thread.isCurrentThread()){
+			long sc = 0;
 			
-			Debug.out( "eh" );
+			for ( UTPProvider provider: providers ){
+				
+				sc += provider.getSocketCount();
+			}
+			values.put( ST_NET_UTP_SOCKET_COUNT, sc );
 		}
+	}
+	
+	public UTPProvider[]
+	getProviders()
+	{
+		return( providers );
 	}
 	
 	public void
@@ -252,285 +188,20 @@ UTPConnectionManager
 		}
 				
 		final AESemaphore	init_sem = new AESemaphore( "uTP:init" );
-		
-		PluginInterface pi = plugin.getPluginInterface();
-		
-		final File plugin_user_dir 	= pi.getPluginconfig().getPluginUserFile( "plugin.properties" ).getParentFile();
-
-		File plugin_install_dir	= new File( pi.getPluginDirectoryName());
-		
-		if ( plugin_install_dir == null || !plugin_install_dir.exists()){
-			
-			plugin_install_dir = plugin_user_dir;
-		}
-		
-		final File f_plugin_install_dir = plugin_install_dir;
-		
+				
 		try{
-			available = utp_provider.load( 
-					new UTPProviderCallback()
-					{
-						public File
-						getPluginUserDir()
-						{
-							return( plugin_user_dir );
-						}
-		
-						public File
-						getPluginInstallDir()
-						{
-							return( f_plugin_install_dir );
-						}
-						
-						public void
-						log(
-							String		str,
-							Throwable	error )
-						{
-							plugin.log(str,error);
-						}
-						
-						@Override
-						public void 
-						checkThread()
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								UTPConnectionManager.this.checkThread();
-							}
-						}
-						
-						public int
-						getRandom()
-						{
-							return( UTPUtils.UTP_Random());
-						}
-						
-						public long
-						getMilliseconds()
-						{
-							return( UTPUtils.UTP_GetMilliseconds());
-						}
-						
-						public long
-						getMicroseconds()
-						{
-							return( UTPUtils.UTP_GetMicroseconds());
-						}
-						
-						public void
-						incomingConnection(
-							String		host,
-							int			port,
-							UTPSocket	utp_socket,
-							long		con_id )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-							
-							init_sem.reserve();
-							
-							accept( current_local_port, new InetSocketAddress( host, port),	utp_socket, con_id );
-						}
-						
-						public void
-						incomingConnection(
-							InetSocketAddress	address,
-							UTPSocket			utp_socket,
-							long				con_id )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-							
-							init_sem.reserve();
-							
-							accept( current_local_port, address,	utp_socket, con_id );
-						}
-												
-						public void
-						send(
-							InetSocketAddress	address,
-							byte[]				buffer,
-							int					length )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-							
-							packet_sent_count++;
-							
-							if ( length != buffer.length ){
-								
-								Debug.out( "optimise this" );
-								
-								byte[] temp = new byte[length];
-								
-								System.arraycopy(buffer, 0, temp, 0, length );
-								
-								buffer = temp;
-							}
-							
-							dispatchSend( address, buffer, length );
-						}
-						
-						public void
-						read(
-							UTPSocket 	utp_socket,
-							ByteBuffer	bb )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							UTPConnection connection = utp_socket.getUTPConnection();
-							
-							if ( connection == null ){
-								
-								Debug.out( "read: unknown socket!" );
-								
-							}else{
-								
-								try{
-									connection.receive( bb );
-									
-								}catch( Throwable e ){
-																	
-									connection.close( Debug.getNestedExceptionMessage(e));
-								}
-							}
-						}
-						
-						public int
-						getReadBufferSize(
-							UTPSocket 	utp_socket )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							UTPConnection connection = utp_socket.getUTPConnection();
-							
-							if ( connection == null ){
-								
-									// can get this during socket shutdown
-								
-								return( 0 );
-								
-							}else{
-								
-								int res = connection.getReceivePendingSize();
-									
-									// we lie here if we have a fair bit queued as this allows
-									// us to control the receive window
-								
-								if ( res > 512*1024 ){
-									
-										// forces us to advertize a window of 0 bytes
-										// to prevent peer from sending us more data until
-										// we've managed to flush this to disk
-									
-									res = Integer.MAX_VALUE;
-								}
-								
-								return( res );
-							}
-						}
-						
-						public void
-						setState(
-							UTPSocket 	utp_socket,
-							int			state )
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							UTPConnection connection = utp_socket.getUTPConnection();
-							
-							if ( connection == null ){
-								
-									// can get this during socket shutdown
-								
-							}else{
-																
-								if ( state == STATE_CONNECT ){
-									
-									connection.setConnected();
-								}
-								
-								if ( state == STATE_CONNECT || state == STATE_WRITABLE ){
-								
-									connection.setCanWrite( true );
-									
-								}else if ( state == STATE_EOF ){
-									
-									connection.close( "EOF" );
-									
-								}else if ( state == STATE_DESTROYING ){
-									
-									connection.setUnusable();
-									
-									connection.close( "Connection destroyed" );
-																		
-									if ( closing_connections.remove( connection )){
-										
-										removeConnection( connection );
-									}
-								}
-							}
-						}
-						
-						@Override
-						public void 
-						setCloseReason(
-							UTPSocket 	utp_socket, 
-							int 		reason)
-						{
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							UTPConnection connection = utp_socket.getUTPConnection();
-							
-							if ( connection != null ){
-							
-								connection.setCloseReason( reason );
-							}
-						}
-						
-						public void
-						error(
-							UTPSocket 	utp_socket,
-							int			error )
-						{	
-							if ( Constants.IS_CVS_VERSION ){
-								checkThread();
-							}
-
-							UTPConnection connection = utp_socket.getUTPConnection();
-							
-							if ( connection == null ){
-								
-								// can get this during socket shutdown
-								
-							}else{
-								
-								connection.close( "Socket error: code=" + error );
-							}
-						}
-						
-						public void
-						overhead(
-							UTPSocket 	utp_socket,
-							boolean		send,
-							int			size,
-							int			type )
-						{
-							//System.out.println( "overhead( " + send + "," + size + "," + type + " )" );
-						}
-					});
+			available = true;
 			
+			for ( UTPConnectionProcessor processor: processors ){
+			
+				available = processor.activate();
+				
+				if ( !available ){
+					
+					break;
+				}
+			}
+		
 			if ( available ){
 							
 				selector = new UTPSelector( this );
@@ -543,6 +214,33 @@ UTPConnectionManager
 		}
 	}
 		
+	private UTPConnectionProcessor
+	allocateProcessor()
+	{
+		if ( NUM_PROCESSORS == 1 ){
+			
+			return( processors[0] );
+		}
+		
+		UTPConnectionProcessor result = null;
+		
+		int min = Integer.MAX_VALUE;
+		
+		for ( UTPConnectionProcessor processor: processors ){
+			
+			int socks = processor.getProvider().getSocketCount();
+			
+			if ( socks < min ){
+				
+				min		= socks;
+				
+				result	= processor;
+			}
+		}
+		
+		return( result );
+	}
+	
 	public UTPConnection
 	connect(
 		final InetSocketAddress		target,
@@ -554,58 +252,8 @@ UTPConnectionManager
 			
 			throw( new UnknownHostException( target.getHostName()));
 		}
-		
-		final Object[] result = { null };
-	
-		final AESemaphore sem = new AESemaphore( "uTP:connect" );
-		
-		dispatch(
-				new DispatchTask( "connect" )
-				{
-					public void
-					runTask()
-				  	{
-						current_local_port = transport.getLocalPort();
-						
-						try{
-							Object[] x = utp_provider.connect( target.getAddress().getHostAddress(), target.getPort());
-						
-							if ( x != null ){
-						
-								result[0] = addConnection( target, transport, (UTPSocket)x[0], (Long)x[1] );
-								
-							}else{
-								
-								result[0] = new IOException( "Connect failed" );
-							}
-						}catch( Throwable e ){
-							
-							e.printStackTrace();
-							
-							result[0] = new IOException( "Connect failed: " + Debug.getNestedExceptionMessage(e));
-							
-						}finally{
-							
-							sem.release();
-						}
-				  	}
-				});
-		
-		if ( !sem.reserve( UTP_PROVIDER_TIMEOUT )){
-			
-			Debug.out( "Deadlock probably detected" );
-			
-			throw( new IOException( "Deadlock" ));
-		}
-		
-		if ( result[0] instanceof UTPConnection ){
-			
-			return((UTPConnection)result[0]);
-			
-		}else{
-			
-			throw((IOException)result[0]);
-		}
+
+		return( allocateProcessor().connect(target, transport));
 	}
 	
 	public boolean
@@ -652,7 +300,7 @@ UTPConnectionManager
 								
 				// System.out.println( "Looks like uTP incoming connection from " + from );
 
-				return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
+				return( doReceive( allocateProcessor(), local_port, address.getHostAddress(), from.getPort(), data, length ));
 										
 			}else if ( (first_byte&0x0f)==0x01 ){
 				
@@ -717,7 +365,7 @@ UTPConnectionManager
 						
 						// System.out.println( "Looks like uTP incoming data from " + from );
 							
-						return( doReceive( local_port, address.getHostAddress(), from.getPort(), data, length ));
+						return( doReceive( connection.getProcessor(), local_port, address.getHostAddress(), from.getPort(), data, length ));
 							
 					}else{
 						
@@ -732,81 +380,34 @@ UTPConnectionManager
 	
 	private boolean
 	doReceive(
-		final int 			local_port,
-		final String		from_address,
-		final int			from_port,
-		final byte[]		data,
-		final int			length )
+		UTPConnectionProcessor	processor,
+		int 					local_port,
+		String					from_address,
+		int						from_port,
+		byte[]					data,
+		int						length )
 	{
-		if ( !utp_provider.isValidPacket( data, length )){
+		if ( processor.doReceive(local_port, from_address, from_port, data, length)){
+			
+			packet_received_count++;
+			
+			return( true );
+			
+		}else{
 			
 			return( false );
 		}
-			
-		packet_received_count++;
-		
-		if ( total_incoming_queued.get() > MAX_INCOMING_QUEUED ){
-			
-			if ( total_incoming_queued_log_state == 0 ){
-				
-				Debug.out( "uTP pending packet queue too large, discarding..." );
-				
-				total_incoming_queued_log_state = 1;
-			}
-			
-			return( true );
-		}
-		
-		if ( total_incoming_queued_log_state == 1 ){
-			
-			if ( total_incoming_queued.get() < MAX_INCOMING_QUEUED_LOG_OK ){
-
-				Debug.out( "uTP pending packet queue emptied, processing..." );
-			
-				total_incoming_queued_log_state	= 0;
-			}
-		}
-			
-		total_incoming_queued.addAndGet( length );
-		
-		dispatch(
-			new DispatchTask( "receive" )
-			{
-				public void
-				runTask()
-			  	{
-					current_local_port = local_port;
-											
-					total_incoming_queued.addAndGet( -length );
-					
-					//System.out.println( "recv " + from_address + ":" + from_port + " - " + ByteFormatter.encodeString( data, 0, length ));
-					
-					try{
-						if ( !utp_provider.receive( from_address, from_port, data, length )){
-							
-							if ( Constants.IS_CVS_VERSION ){
-							
-								Debug.out( "Failed to process uTP packet: " + ByteFormatter.encodeString( data, 0, length ) + " from " + from_address);
-							}
-						}
-					}catch( Throwable e ){
-						
-						Debug.out( e );
-					}
-				}
-			});
-		
-		return( true );
 	}
 	
-	private void
+	protected void
 	accept(
 		int						local_port,
-		final InetSocketAddress	remote_address,
+		InetSocketAddress		remote_address,
+		UTPConnectionProcessor	processor,
 		UTPSocket				utp_socket,
 		long					con_id )
 	{		
-		final UTPConnection	new_connection = addConnection( remote_address, null, utp_socket, con_id );
+		final UTPConnection	new_connection = addConnection( remote_address, null, processor, utp_socket, con_id );
 		
 		final UTPTransportHelper	helper = new UTPTransportHelper( this, local_port, remote_address, new_connection );
 
@@ -909,20 +510,17 @@ UTPConnectionManager
 		}
 	}
 	
-	private UTPConnection
+	protected UTPConnection
 	addConnection(
 		InetSocketAddress		remote_address,
 		UTPTransportHelper		transport_helper,			// null for incoming
+		UTPConnectionProcessor	processor,
 		UTPSocket				utp_socket,
 		long					con_id )
 	{
 		List<UTPConnection>	to_destroy = null;
 		
-		final UTPConnection 	new_connection = new UTPConnection( this, remote_address, transport_helper, utp_socket, con_id );
-		  
-		if ( Constants.IS_CVS_VERSION ){
-			checkThread();
-		}
+		final UTPConnection 	new_connection = new UTPConnection( this, remote_address, transport_helper, processor, utp_socket, con_id );
 				
 		CopyOnWriteList<UTPConnection> l = address_connection_map.get( remote_address.getAddress());
 			
@@ -992,14 +590,10 @@ UTPConnectionManager
 		return( new_connection );
 	}
 	
-	private void
+	protected void
 	removeConnection(
 		UTPConnection		c )
 	{	
-		if ( Constants.IS_CVS_VERSION ){
-			checkThread();
-		}
-		
 		if ( connections.remove( c )){
 
 			connection_count = connections.size();
@@ -1034,283 +628,63 @@ UTPConnectionManager
 		return( selector );
 	}
 	
-	/*
-	public long
-	getDispatchRate()
-	{
-		return( dispatch_rate.getAverage());
-	}
-	*/
-	
 	protected int
 	poll(
 		long			now )
-	{		
-			// called every 500ms or so
+	{	
+		for ( UTPConnectionProcessor processor: processors ){
+			
+			processor.poll( now );
+		}
 		
-		dispatch(
-			new DispatchTask( "poll" )
-			{
-				public void
-				runTask()
-				{
-					//System.out.println( "poll");
-					utp_provider.checkTimeouts();
-					
-					//System.out.println("UTPProvider socket count=" +  utp_provider.getSocketCount());
-					
-					if ( closing_connections.size() > 0 ){
-						
-						long	now = SystemTime.getMonotonousTime();
-						
-						Iterator<UTPConnection> it = closing_connections.iterator();
-						
-						while( it.hasNext()){
-						
-							UTPConnection c = it.next();
-							
-							long 	close_time = c.getCloseTime();
-							
-							if ( close_time > 0 ){
-								
-								if ( now - close_time > CLOSING_TIMOUT ){
-									
-									it.remove();
-									
-									removeConnection( c );
-									
-									log( "Removing " + c.getString() + " due to close timeout" );
-								}
-							}
-							
-						}
-					}
-				}
-			});
-		
-		int result =  connection_count;
-		
-		return( result );
+		return( connection_count );
 	}
 			
 	protected int
 	write(
-		final UTPConnection		c,
-		final ByteBuffer[]		buffers,
-		final int				start,
-		final int				len )
+		UTPConnection	connection,
+		ByteBuffer[]	buffers,
+		int				start,
+		int				len )
 	
 		throws IOException
 	{
-		final AESemaphore sem = new AESemaphore( "uTP:write" );
-		
-		final Object[] result = {null};
-		
-		dispatch(
-			new DispatchTask( "write" )
-			{
-				public void
-				runTask()
-				{
-					boolean	log_error = true;
-
-					try{						
-						if ( c.isUnusable()){
-
-							log_error = false;
-							
-							throw( new Exception( "Connection is closed" ));
-							
-						}else if ( !c.isConnected()){
-
-							log_error = false;
-							
-							throw( new Exception( "Connection is closed" ));
-								
-						}else if ( !c.canWrite()){
-							
-							Debug.out( "Write operation on non-writable connection" );
-							
-							result[0] = 0;						
-							
-						}else{
-								
-							int	pre_total = 0;
-							
-							for (int i=start;i<start+len;i++){
-								
-								pre_total += buffers[i].remaining();
-							}
-																
-							boolean still_writable = utp_provider.write( c.getSocket(), buffers, start, len );
-							
-							c.setCanWrite( still_writable );
-							
-							int	post_total = 0;
-							
-							for (int i=start;i<start+len;i++){
-								
-								post_total += buffers[i].remaining();
-							}
-							
-							result[0] = pre_total - post_total;
-						}
-					}catch( Throwable e ){
-						
-						if ( log_error ){
-						
-							Debug.out( e );
-						}
-						
-						c.close( Debug.getNestedExceptionMessage(e));
-						
-						result[0] = new IOException( "Write failed: " + Debug.getNestedExceptionMessage(e));
-						
-					}finally{
-					
-						sem.release();
-					}
-				}
-			});
-		
-		if ( !sem.reserve( UTP_PROVIDER_TIMEOUT )){
-			
-			Debug.out( "Deadlock probably detected" );
-			
-			throw( new IOException( "Deadlock" ));
-		}
-		
-		if ( result[0] instanceof Integer ){
-			
-			return((Integer)result[0]);
-		}
-		
-		throw((IOException)result[0]);
+		return( connection.getProcessor().write(connection, buffers, start, len));
 	}
 	
 	protected void
 	inputIdle()
 	{
-		if ( !inputIdlePending.compareAndSet( false, true )){
+		for ( UTPConnectionProcessor processor: processors ){
 			
-			return;
+			processor.inputIdle();
 		}
-		
-		dispatch( 
-			new DispatchTask( "inputIdle" )
-			{
-				public void
-				runTask()
-				{
-					inputIdlePending.set( false );
-					
-					try{
-						utp_provider.incomingIdle();
-							
-					}catch( Throwable e ){
-						
-						Debug.out( e );
-					}
-				}
-			});
 	}
 	
 	protected void
 	readBufferDrained(
-		final UTPConnection		c )
+		UTPConnection		connection )
 	{
-		dispatch(
-			new DispatchTask( "readDrained")
-			{
-				public void
-				runTask()
-				{
-					if ( !c.isUnusable()){
-						
-						try{
-							utp_provider.receiveBufferDrained( c.getSocket());
-							
-						}catch( Throwable e ){
-							
-							Debug.out( e );
-						}
-					}
-				}
-			});
+		connection.getProcessor().readBufferDrained( connection );
 	}
 	
 	protected void
 	close(
-		UTPConnection	c,
-		String			r,
+		UTPConnection	connection,
+		String			reason,
 		int				close_reason )
 	{
-		dispatch(
-			new DispatchTask( "close" )
-			{
-				public void
-				runTask()
-				{
-					boolean	async_close = false;
-		
-					try{
-						if ( !c.isUnusable()){
-							
-							log( "Closed connection to " + c.getRemoteAddress() + ": " + r + " (" + c.getState() + ")" );
-			
-							try{
-								c.setUnusable();
-			
-								utp_provider.close( c.getSocket(), close_reason );
-								
-									// wait for the destroying callback
-								
-								async_close = true;
-								
-							}catch( Throwable e ){
-								
-								Debug.out( e );
-							}
-						}
-					}finally{
-						
-						if ( async_close ){
-										
-							closing_connections.add( c );
-						
-						}else{
-															
-							if ( closing_connections.contains( c )){
-									
-								return;
-							}
-							
-							removeConnection( c );
-						}
-					}
-				}
-			});
+		connection.getProcessor().close(connection, reason, close_reason);
 	}
 	
-	private final void
-	dispatch(
-		DispatchTask	target )
-	{
-		try{
-			msg_queue.put(target);
-			
-		}catch( Throwable e ){
-			
-			Debug.out( "Failed to enqueue task", e );
-		}
-	}
-	
-	private void
+	protected void
 	dispatchSend(
 		InetSocketAddress	address,
 		byte[]				buffer,
 		int					length )
 	{
+		packet_sent_count++;
+
 		plugin.send( current_local_port, address, buffer, length );
 	}
 	
@@ -1467,14 +841,20 @@ UTPConnectionManager
 	setReceiveBufferSize(
 		int		size )
 	{
-		utp_provider.setOption( UTPProvider.OPT_RECEIVE_BUFFER, size==0?DEFAULT_RECV_BUFFER_KB:size );
+		for ( UTPConnectionProcessor processor: processors ){
+			
+			processor.setReceiveBufferSize(size);
+		}
 	}
 	
 	public void
 	setSendBufferSize(
 		int		size )
 	{
-		utp_provider.setOption( UTPProvider.OPT_SEND_BUFFER, size==0?DEFAULT_SEND_BUFFER_KB:size );
+		for ( UTPConnectionProcessor processor: processors ){
+		
+			processor.setSendBufferSize(size);
+		}
 	}
 	
 	protected void
@@ -1484,54 +864,11 @@ UTPConnectionManager
 		plugin.log( str );
 	}
 	
-	long dispatch_id = 0;
-	
-	abstract class
-	DispatchTask
-		extends AERunnable
+	protected void
+	log(
+		String		str,
+		Throwable	error )
 	{
-		final String	name;
-		
-		// final long queued = SystemTime.getHighPrecisionCounter();
-		
-		DispatchTask(
-			String 	_name )
-		{
-			name	= _name;
-		}
-		
-		public abstract void
-		runTask();
-		
-		public void
-		runSupport()
-		{
-			try{
-				/*
-				long start = SystemTime.getHighPrecisionCounter();
-				
-				long delay = start - queued;
-				
-				if ( delay > 1000000 ){
-					
-					System.out.println( name + ": delay: " + delay );
-				}
-				*/
-				runTask();
-				/*
-				long end = SystemTime.getHighPrecisionCounter();
-				
-				long elapsed = end - start;
-						
-				if ( elapsed > 1000000 ){
-					
-					System.out.println( name + ": took " + elapsed );
-				}
-				*/
-			}finally{
-				
-				//dispatchSends();
-			}
-		}
+		plugin.log(str,error);
 	}
 }

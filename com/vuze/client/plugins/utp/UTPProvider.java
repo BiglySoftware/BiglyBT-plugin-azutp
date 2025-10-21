@@ -33,10 +33,7 @@ UTPProvider
 	
 	public static final int OPT_RECEIVE_BUFFER	= 1;
 	public static final int OPT_SEND_BUFFER		= 2;
-	
-	public int
-	getVersion();
-	
+		
 	public boolean
 	load(
 		UTPProviderCallback			callback );

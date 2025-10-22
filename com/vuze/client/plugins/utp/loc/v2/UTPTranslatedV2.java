@@ -35,7 +35,7 @@ import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnection;
 import com.biglybt.core.util.AddressUtils;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
-
+import com.biglybt.core.util.IndentWriter;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderException;
@@ -2203,6 +2203,26 @@ UTPTranslatedV2
 			socket_id = socket_id_next.incrementAndGet();
 		}
 		
+		String
+		getString()
+		{
+			long now_ms = callback.getMilliseconds();
+			
+			return( "id=" + socket_id +
+					", state=" + state +
+					", got_fin=" + got_fin + "/" + got_fin_reached +
+					", send_fin=" + fin_sent + "/" + fin_sent_acked +
+					", read_shut=" + read_shutdown +
+					", close_req=" + close_requested +
+					", last_recv=" + (now_ms - last_got_packet ) +
+					", last_sent=" + (now_ms - last_sent_packet ) +
+					", curr_wind_pkts=" + cur_window_packets.i + 
+					", retransmit_timeout=" + retransmit_timeout +
+					", rto_timeout=" + ( rto_timeout - now_ms )
+					);
+					
+		}
+		
 		public long
 		getID()
 		{
@@ -2880,167 +2900,185 @@ UTPTranslatedV2
 		if (state != CS_DESTROY) flush_packets();
 
 		switch (state) {
-		case CS_SYN_SENT:
-		case CS_SYN_RECV:			// https://github.com/bittorrent/libutp/commit/e81b42dad173ab2af3f26d13a2bc9ee59f1499da
-		case CS_CONNECTED_FULL:
-		case CS_CONNECTED: {
-
-			// Reset max window...
-			if ((int)(ctx.current_ms - zerowindow_time) >= 0 && max_window_user == 0) {
-				max_window_user = PACKET_SIZE;
-			}
-
-			if ((int)(ctx.current_ms - rto_timeout) >= 0
-				&& rto_timeout > 0) {
-
-				boolean ignore_loss = false;
-
-				if (cur_window_packets.i == 1 
-					&& ((seq_nr.i - 1) & ACK_NR_MASK) == mtu_probe_seq
-					&& mtu_probe_seq != 0) {
-					// we only had  a single outstanding packet that timed out, and it was the probe
-					mtu_ceiling = mtu_probe_size - 1;
-					mtu_search_update();
-					// this packet was most likely dropped because the packet size being
-					// too big and not because congestion. To accelerate the binary search for
-					// the MTU, resend immediately and don't reset the window size
-					ignore_loss = true;
-					//log(UTP_LOG_MTU, "MTU [PROBE-TIMEOUT] floor:%d ceiling:%d current:%d"
-					//	, mtu_floor, mtu_ceiling, mtu_last);
+			case CS_SYN_SENT:
+			case CS_SYN_RECV:			// https://github.com/bittorrent/libutp/commit/e81b42dad173ab2af3f26d13a2bc9ee59f1499da
+			case CS_CONNECTED_FULL:
+			case CS_CONNECTED: {
+	
+				// Reset max window...
+				if ((int)(ctx.current_ms - zerowindow_time) >= 0 && max_window_user == 0) {
+					max_window_user = PACKET_SIZE;
 				}
-				// we dropepd the probe, clear these fields to
-				// allow us to send a new one
-				mtu_probe_seq = mtu_probe_size = 0;
-				//log(UTP_LOG_MTU, "MTU [TIMEOUT]");
-
-				/*
-				OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
-
-				// If there were a lot of retransmissions, force recomputation of round trip time
-				if (pkt->transmissions >= 4)
-					rtt = 0;
-				*/
-
-				// Increase RTO
-				int new_timeout = ignore_loss ? retransmit_timeout : retransmit_timeout * 2;
-
-				// They initiated the connection but failed to respond before the rto. 
-				// A malicious client can also spoof the destination address of a ST_SYN bringing us to this state.
-				// Kill the connection and do not notify the upper layer
-				if (state == CS_SYN_RECV) {
-					state = CS_DESTROY;
-					utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
-					return;
-				}
-				
-				// We initiated the connection but the other side failed to respond before the rto
-				
-				if (retransmit_count >= 4 || (state == CS_SYN_SENT && retransmit_count >= 2)) {
-					// 4 consecutive transmissions have timed out. Kill it. If we
-					// haven't even connected yet, give up after only 2 consecutive
-					// failed transmissions.
-					if (close_requested)
+	
+				if ((int)(ctx.current_ms - rto_timeout) >= 0
+					&& rto_timeout > 0) {
+	
+					boolean ignore_loss = false;
+	
+					if (cur_window_packets.i == 1 
+						&& ((seq_nr.i - 1) & ACK_NR_MASK) == mtu_probe_seq
+						&& mtu_probe_seq != 0) {
+						// we only had  a single outstanding packet that timed out, and it was the probe
+						mtu_ceiling = mtu_probe_size - 1;
+						mtu_search_update();
+						// this packet was most likely dropped because the packet size being
+						// too big and not because congestion. To accelerate the binary search for
+						// the MTU, resend immediately and don't reset the window size
+						ignore_loss = true;
+						//log(UTP_LOG_MTU, "MTU [PROBE-TIMEOUT] floor:%d ceiling:%d current:%d"
+						//	, mtu_floor, mtu_ceiling, mtu_last);
+					}
+					// we dropepd the probe, clear these fields to
+					// allow us to send a new one
+					mtu_probe_seq = mtu_probe_size = 0;
+					//log(UTP_LOG_MTU, "MTU [TIMEOUT]");
+	
+					/*
+					OutgoingPacket *pkt = (OutgoingPacket*)outbuf.get(seq_nr - cur_window_packets);
+	
+					// If there were a lot of retransmissions, force recomputation of round trip time
+					if (pkt->transmissions >= 4)
+						rtt = 0;
+					*/
+	
+					// Increase RTO
+					int new_timeout = ignore_loss ? retransmit_timeout : retransmit_timeout * 2;
+	
+					// They initiated the connection but failed to respond before the rto. 
+					// A malicious client can also spoof the destination address of a ST_SYN bringing us to this state.
+					// Kill the connection and do not notify the upper layer
+					if (state == CS_SYN_RECV) {
 						state = CS_DESTROY;
-					else
-						state = CS_RESET;
-					utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
-					return;
-				}
-
-				retransmit_timeout = new_timeout;
-				rto_timeout = ctx.current_ms + new_timeout;
-
-				if (!ignore_loss) {
-					// On Timeout
-					duplicate_ack = 0;
-
-					int packet_size = get_packet_size();
-
-					if (cur_window_packets.i == 0 && max_window > packet_size) {
-						// we don't have any packets in-flight, even though
-						// we could. This implies that the connection is just
-						// idling. No need to be aggressive about resetting the
-						// congestion window. Just let it decay by a 3:rd.
-						// don't set it any lower than the packet size though
-						//int old_max = max_window;
-						max_window = Math.max(max_window * 2 / 3, (int)(packet_size));
-						//Debug.out( old_max + " -> " + max_window  );
-					} else {
-						// our delay was so high that our congestion window
-						// was shrunk below one packet, preventing us from
-						// sending anything for one time-out period. Now, reset
-						// the congestion window to fit one packet, to start over
-						// again
-						
-						// PARG - changed to decay by 1/2 if window not < packet_size
-						if ( max_window < packet_size ){
-							//Debug.out( max_window + " -> " + packet_size  );
-							max_window = packet_size;
-							slow_start = true;
-						}else{
+						utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
+						return;
+					}
+					
+					// We initiated the connection but the other side failed to respond before the rto
+					
+					if (retransmit_count >= 4 || (state == CS_SYN_SENT && retransmit_count >= 2)) {
+						// 4 consecutive transmissions have timed out. Kill it. If we
+						// haven't even connected yet, give up after only 2 consecutive
+						// failed transmissions.
+						if (close_requested)
+							state = CS_DESTROY;
+						else
+							state = CS_RESET;
+						utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
+						return;
+					}
+	
+					retransmit_timeout = new_timeout;
+					rto_timeout = ctx.current_ms + new_timeout;
+	
+					if (!ignore_loss) {
+						// On Timeout
+						duplicate_ack = 0;
+	
+						int packet_size = get_packet_size();
+	
+						if (cur_window_packets.i == 0 && max_window > packet_size) {
+							// we don't have any packets in-flight, even though
+							// we could. This implies that the connection is just
+							// idling. No need to be aggressive about resetting the
+							// congestion window. Just let it decay by a 3:rd.
+							// don't set it any lower than the packet size though
 							//int old_max = max_window;
-							max_window = Math.max(max_window /2 , (int)(packet_size));
+							max_window = Math.max(max_window * 2 / 3, (int)(packet_size));
 							//Debug.out( old_max + " -> " + max_window  );
+						} else {
+							// our delay was so high that our congestion window
+							// was shrunk below one packet, preventing us from
+							// sending anything for one time-out period. Now, reset
+							// the congestion window to fit one packet, to start over
+							// again
+							
+							// PARG - changed to decay by 1/2 if window not < packet_size
+							if ( max_window < packet_size ){
+								//Debug.out( max_window + " -> " + packet_size  );
+								max_window = packet_size;
+								slow_start = true;
+							}else{
+								//int old_max = max_window;
+								max_window = Math.max(max_window /2 , (int)(packet_size));
+								//Debug.out( old_max + " -> " + max_window  );
+							}
 						}
+					}
+	
+					// every packet should be considered lost
+					for (int i = 0; i < cur_window_packets.i; ++i) {
+						OutgoingPacket pkt = outbuf.get(seq_nr.i - i - 1);
+						if (pkt == null || pkt.transmissions == 0 || pkt.need_resend) continue;
+						pkt.need_resend = true;
+						if (ASSERTS)_assert(cur_window >= pkt.payload);
+						cur_window -= pkt.payload;
+					}
+	
+					if (cur_window_packets.i > 0) {
+						retransmit_count++;
+						// used in parse_log.py
+						//log(UTP_LOG_NORMAL, "Packet timeout. Resend. seq_nr:%u. timeout:%u "
+						//	"max_window:%u cur_window_packets:%d"
+						//	, seq_nr - cur_window_packets, retransmit_timeout
+						//	, (uint)max_window, int(cur_window_packets));
+	
+						fast_timeout = true;
+						timeout_seq_nr.set( seq_nr.i );
+	
+						OutgoingPacket pkt = outbuf.get(seq_nr.i - cur_window_packets.i);
+						if (ASSERTS)_assert(pkt!=null);
+	
+						// Re-send the packet.
+						send_packet(pkt);
+					}
+				}
+	
+				// Mark the socket as writable. If the cwnd has grown, or if the number of
+				// bytes in-flight is lower than cwnd, we need to make the socket writable again
+				// in case it isn't
+				if (state == CS_CONNECTED_FULL && !is_full()) {
+					state = CS_CONNECTED;
+	
+					//#if UTP_DEBUG_LOGGING
+					//log(UTP_LOG_DEBUG, "Socket writable. max_window:%u cur_window:%u packet_size:%u",
+					//	(uint)max_window, (uint)cur_window, (uint)get_packet_size());
+					//#endif
+					utp_call_on_state_change(this.ctx, this, UTP_STATE_WRITABLE);
+				}
+	
+					// https://github.com/bittorrent/libutp/commit/f9b969c8f4b6de094f8506b8eccaabbebcc386b5
+				if (state >= CS_CONNECTED && !fin_sent) {
+					if ((int)(ctx.current_ms - last_sent_packet) >= KEEPALIVE_INTERVAL) {
+						send_keep_alive();
+					}
+				}
+				
+				// PARG added this - we're getting the occasional connection sitting there ins SYN_SENT but never
+				// making any progress nor being removed
+			
+				if ( state == CS_SYN_SENT ){
+					if ((int)(ctx.current_ms - last_sent_packet) >= 2*KEEPALIVE_INTERVAL) {
+						if ( Constants.isCVSVersion()){
+							Debug.out( "Socket stuck in SYN_SENT, closing: " + getString());
+						}
+
+						if (close_requested)
+							state = CS_DESTROY;
+						else
+							state = CS_RESET;
+						utp_call_on_error(ctx, this, UTP_ETIMEDOUT);
 					}
 				}
 
-				// every packet should be considered lost
-				for (int i = 0; i < cur_window_packets.i; ++i) {
-					OutgoingPacket pkt = outbuf.get(seq_nr.i - i - 1);
-					if (pkt == null || pkt.transmissions == 0 || pkt.need_resend) continue;
-					pkt.need_resend = true;
-					if (ASSERTS)_assert(cur_window >= pkt.payload);
-					cur_window -= pkt.payload;
-				}
-
-				if (cur_window_packets.i > 0) {
-					retransmit_count++;
-					// used in parse_log.py
-					//log(UTP_LOG_NORMAL, "Packet timeout. Resend. seq_nr:%u. timeout:%u "
-					//	"max_window:%u cur_window_packets:%d"
-					//	, seq_nr - cur_window_packets, retransmit_timeout
-					//	, (uint)max_window, int(cur_window_packets));
-
-					fast_timeout = true;
-					timeout_seq_nr.set( seq_nr.i );
-
-					OutgoingPacket pkt = outbuf.get(seq_nr.i - cur_window_packets.i);
-					if (ASSERTS)_assert(pkt!=null);
-
-					// Re-send the packet.
-					send_packet(pkt);
-				}
+				break;
 			}
-
-			// Mark the socket as writable. If the cwnd has grown, or if the number of
-			// bytes in-flight is lower than cwnd, we need to make the socket writable again
-			// in case it isn't
-			if (state == CS_CONNECTED_FULL && !is_full()) {
-				state = CS_CONNECTED;
-
-				//#if UTP_DEBUG_LOGGING
-				//log(UTP_LOG_DEBUG, "Socket writable. max_window:%u cur_window:%u packet_size:%u",
-				//	(uint)max_window, (uint)cur_window, (uint)get_packet_size());
-				//#endif
-				utp_call_on_state_change(this.ctx, this, UTP_STATE_WRITABLE);
-			}
-
-				// https://github.com/bittorrent/libutp/commit/f9b969c8f4b6de094f8506b8eccaabbebcc386b5
-			if (state >= CS_CONNECTED && !fin_sent) {
-				if ((int)(ctx.current_ms - last_sent_packet) >= KEEPALIVE_INTERVAL) {
-					send_keep_alive();
-				}
-			}
-			break;
-		}
-
-		// prevent warning
-		case CS_UNINITIALIZED:
-		case CS_IDLE:
-		case CS_RESET:
-		case CS_DESTROY:
-			break;
+	
+			// prevent warning
+			case CS_UNINITIALIZED:
+			case CS_IDLE:
+			case CS_RESET:
+			case CS_DESTROY:
+				break;
 		}
 	}
 
@@ -5640,6 +5678,28 @@ UTPTranslatedV2
 		throws UTPProviderException
 	{
 		throw( new UTPProviderException( "Not Supported" ));
+	}
+	
+	public void
+	generate(
+		IndentWriter	writer )
+	{
+		writer.println( "Provider: socks=" + global_ctx.utp_sockets.size());
+		
+		writer.indent();
+		
+		try{
+			
+			for ( UTPSocketKeyData data: global_ctx.utp_sockets.values()){
+				
+				UTPSocketImpl socket = data.socket;
+			
+				writer.println( socket.getString());
+			}
+		}finally{
+			
+			writer.exdent();
+		}
 	}
 	
 	private int

@@ -705,4 +705,16 @@ UTPTransportHelper
 		long forBytes) 
 	{	
 	}
+	
+	public String
+	getString()
+	{
+		UTPTransport trans = transport;
+		
+		return( "address=" + address + 
+				",incoming=" + incoming +
+				",trans=" + (trans==null?"null":("["+trans.getString()+"]"))
+				);
+				
+	}
 }

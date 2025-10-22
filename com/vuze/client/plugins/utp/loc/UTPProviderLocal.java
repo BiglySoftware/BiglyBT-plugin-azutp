@@ -30,7 +30,7 @@ import java.util.*;
 import com.biglybt.core.util.Constants;
 import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.HostNameToIPResolver;
-
+import com.biglybt.core.util.IndentWriter;
 import com.vuze.client.plugins.utp.UTPProvider;
 import com.vuze.client.plugins.utp.UTPProviderCallback;
 import com.vuze.client.plugins.utp.UTPProviderException;
@@ -392,6 +392,13 @@ UTPProviderLocal
 	getStats()
 	{
 		return( this );
+	}
+	
+	public void
+	generate(
+		IndentWriter	writer )
+	{
+		impl.generate( writer );
 	}
 	
 	public long

@@ -28,6 +28,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.biglybt.core.util.AEDiagnostics;
 import com.biglybt.core.util.AERunnable;
 import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.AEThread2;
@@ -122,6 +123,52 @@ UTPConnectionProcessor
 					});
 		
 		dispatch_thread.setPriority( Thread.MAX_PRIORITY );
+		
+		AEDiagnostics.addEvidenceGenerator(
+				(writer)->{
+					writer.println( "UTP Connection Processor - " + _index );
+
+					try{
+						writer.indent();
+						
+						writer.println( "closing=" + closing_connections.size());
+												
+						try{
+							writer.indent();
+
+							for ( UTPConnection con: closing_connections ){
+								
+								writer.println( con.getString());
+							}
+						}finally{
+							
+							writer.exdent();
+						}
+						final AESemaphore sem = new AESemaphore( "uTP:connect" );
+						
+						dispatch(
+								new DispatchTask( "generate" )
+								{
+									public void
+									runTask()
+									{
+										try{
+											utp_provider.generate( writer );
+											
+										}finally{
+											
+											sem.release();
+										}
+									}
+								});
+						
+						sem.reserve();
+						
+					}finally{
+						
+						writer.exdent();
+					}
+				});
 	}
 	
 	public UTPProvider

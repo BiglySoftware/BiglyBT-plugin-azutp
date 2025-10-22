@@ -25,6 +25,8 @@ package com.vuze.client.plugins.utp;
 
 import java.nio.ByteBuffer;
 
+import com.biglybt.core.util.IndentWriter;
+
 public interface 
 UTPProvider 
 {
@@ -104,4 +106,8 @@ UTPProvider
 	
 	public UTPProviderStats
 	getStats();
+	
+	public void
+	generate(
+		IndentWriter	writer );
 }

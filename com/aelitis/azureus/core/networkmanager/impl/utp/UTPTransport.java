@@ -80,6 +80,8 @@ UTPTransport
 		boolean 				_allow_fallback, 
 		byte[][] 				_shared_secrets ) 
 	{
+			// outgoing
+		
 		manager					= _manager;
 		endpoint				= _endpoint;  
 		connect_with_crypto 	= _use_crypto;
@@ -93,9 +95,13 @@ UTPTransport
 		ProtocolEndpointUTP		_endpoint,
 		TransportHelperFilter	_filter )
 	{
+			// incoming
+		
 		manager			= _manager;
 		endpoint		= _endpoint;
 	
+		connected = true;
+		
 		setFilter( _filter );
 	}
 	
@@ -244,7 +250,7 @@ UTPTransport
 		    					
 		    					close( f_helper, "Handshake failure" );
 		    					
-		    					listener.connectFailure( failure_msg );
+		    					listener.connectFailure( f_helper.getTransport(), failure_msg );
 		    				}
 		    			}
 	
@@ -301,7 +307,7 @@ UTPTransport
 				helper.close( Debug.getNestedExceptionMessage( e ));
 			}
 				
-			listener.connectFailure( e );
+			listener.connectFailure( helper==null?null:helper.getTransport(), e );
 		}
 	}
 	
@@ -491,5 +497,12 @@ UTPTransport
 					}
 				});
 		}
+	}
+	
+	public String
+	getString()
+	{
+		return( "connected=" + connected + 
+				",closed=" + closed );
 	}
 }

@@ -34,10 +34,10 @@ import java.nio.ByteBuffer;
 import com.biglybt.core.logging.LogEvent;
 import com.biglybt.core.logging.LogIDs;
 import com.biglybt.core.logging.Logger;
+import com.biglybt.core.util.AEDiagnostics;
 import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.CopyOnWriteList;
 import com.biglybt.core.util.Debug;
-import com.biglybt.core.util.RandomUtils;
 import com.biglybt.core.networkmanager.ConnectionEndpoint;
 import com.biglybt.core.networkmanager.ProtocolEndpoint;
 import com.biglybt.core.networkmanager.ProtocolEndpointFactory;
@@ -62,9 +62,6 @@ UTPConnectionManager
 	public static final int MIN_WRITE_PAYLOAD		= MIN_MSS - MAX_HEADER;
 	public static final int MAX_BUFFERED_PAYLOAD	= 512;
 
-	private static final int CLOSING_TIMOUT			= 15*1000;
-	private static final int UTP_PROVIDER_TIMEOUT	= 30*1000;
-	
 	public static final String ST_NET_UTP_PACKET_SENT_COUNT			= "net.utp.packet.sent.count";
 	public static final String ST_NET_UTP_PACKET_RECEIVED_COUNT		= "net.utp.packet.received.count";
 	public static final String ST_NET_UTP_CONNECTION_COUNT			= "net.utp.connection.count";
@@ -118,6 +115,25 @@ UTPConnectionManager
 	{
 		plugin		= _plugin;
 		
+		AEDiagnostics.addEvidenceGenerator(
+				(writer)->{
+					writer.println( "UTP Connection Manager" );
+
+					try{
+						writer.indent();
+						
+						writer.println( "Connections: " + connections.size());
+						
+						for ( UTPConnection c: connections ){
+							
+							writer.println( c.getString());
+						}
+					}finally{
+						
+						writer.exdent();
+					}
+				});
+					
 		processors	= new UTPConnectionProcessor[NUM_PROCESSORS];
 		providers	= new UTPProvider[ NUM_PROCESSORS ];
 		
@@ -136,6 +152,8 @@ UTPConnectionManager
 		types.add( ST_NET_UTP_SOCKET_COUNT );			
 
 		CoreStats.registerProvider( types, this );
+		
+
 	}
 	
 	@Override

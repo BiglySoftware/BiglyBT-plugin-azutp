@@ -26,6 +26,7 @@ package com.vuze.client.plugins.utp.loc;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 
+import com.biglybt.core.util.IndentWriter;
 import com.vuze.client.plugins.utp.UTPProviderException;
 import com.vuze.client.plugins.utp.UTPProviderStats;
 import com.vuze.client.plugins.utp.UTPSocket;
@@ -142,6 +143,10 @@ UTPTranslated
 	
 	public int
 	UTP_GetSocketCount();
+	
+	public void
+	generate(
+		IndentWriter	writer );
 	
 		//
 

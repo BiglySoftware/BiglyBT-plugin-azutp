@@ -433,9 +433,15 @@ UTPConnection
 	protected String
 	getState()
 	{
+		UTPTransportHelper trans = transport;
+		
 		return( "sent=" + DisplayFormatters.formatByteCountToKiBEtc( total_sent ) + 
 				", received=" + DisplayFormatters.formatByteCountToKiBEtc( total_received ) + 
 				", writable=" + is_writable + 
+				", transport=" + (trans==null?"null":("[" + trans.getString() + "]")) + 
+				", connected=" + connected +
+				", unusable=" + is_unusable +
+				", close_time= " + close_time +
 				", last_w_buff=" + last_write_buff + 
 				", last_w=" + last_write +
 				", last_r_buff=" + last_read_buff + 
@@ -446,6 +452,6 @@ UTPConnection
 	public String
 	getString()
 	{
-		return( remote_address + ", socket=" + utp_socket + ", con_id" + con_id + " - " + getState());
+		return( remote_address + ", socket=" + utp_socket.getID() + ", con_id=" + con_id + " - " + getState());
 	}
 }

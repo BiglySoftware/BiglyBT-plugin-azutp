@@ -30,6 +30,7 @@ import java.util.LinkedList;
 import java.util.List;
 
 import com.biglybt.core.networkmanager.Transport;
+import com.biglybt.core.util.Debug;
 import com.biglybt.core.util.DisplayFormatters;
 import com.biglybt.core.util.SystemTime;
 import com.vuze.client.plugins.utp.UTPSocket;
@@ -56,7 +57,10 @@ UTPConnection
 	
 	private volatile boolean	is_unusable;
 	
+	private volatile long		last_progress_time = SystemTime.getMonotonousTime();
+	
 	private long				total_received;
+	
 	private long				total_sent;
 	
 	private int					last_read_buff	= -1;
@@ -282,6 +286,11 @@ UTPConnection
 				
 		// System.out.println( "Connection(" + getID() + ") - write -> " + written );
 		
+		if ( written > 0 ){
+			
+			last_progress_time = SystemTime.getMonotonousTime();
+		}
+		
 		return( written );
 	}
 	
@@ -345,7 +354,24 @@ UTPConnection
 		
 		// System.out.println( "Connection(" + getID() + ") - read -> " +total );
 
+		if ( total > 0 ){
+			
+			last_progress_time = SystemTime.getMonotonousTime();
+		}
+		
 		return( total );
+	}
+	
+	protected void
+	checkTimeout(
+		long		now )
+	{
+		if ( now - last_progress_time > 2*60*1000 ){
+			
+			Debug.out( "timeout" );
+			
+			close( "Inactivity timeout" );
+		}
 	}
 	
 	protected void

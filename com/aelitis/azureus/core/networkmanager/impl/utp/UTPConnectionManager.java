@@ -38,6 +38,7 @@ import com.biglybt.core.util.AEDiagnostics;
 import com.biglybt.core.util.AESemaphore;
 import com.biglybt.core.util.CopyOnWriteList;
 import com.biglybt.core.util.Debug;
+import com.biglybt.core.util.SystemTime;
 import com.biglybt.core.networkmanager.ConnectionEndpoint;
 import com.biglybt.core.networkmanager.ProtocolEndpoint;
 import com.biglybt.core.networkmanager.ProtocolEndpointFactory;
@@ -100,6 +101,8 @@ UTPConnectionManager
 		
 	private boolean	available;
 		
+	private long	last_timeout_check = SystemTime.getMonotonousTime();
+	
 	private long	packet_received_count;
 	private long	packet_sent_count;
 	
@@ -650,6 +653,16 @@ UTPConnectionManager
 	poll(
 		long			now )
 	{	
+		if ( now - last_timeout_check >= 30*1000 ){
+			
+			last_timeout_check = now;
+			
+			for ( UTPConnection c: connections ){
+			
+				c.checkTimeout( now );
+			}
+		}
+		
 		for ( UTPConnectionProcessor processor: processors ){
 			
 			processor.poll( now );

@@ -367,9 +367,7 @@ UTPConnection
 		long		now )
 	{
 		if ( now - last_progress_time > 2*60*1000 ){
-			
-			Debug.out( "timeout" );
-			
+						
 			close( "Inactivity timeout" );
 		}
 	}

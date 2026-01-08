@@ -55,7 +55,7 @@ UTPTransportHelper
 	
 	private boolean					incoming;
 	
-	private UTPConnection			connection;
+	private final UTPConnection		connection;
 	
 	private selectListener		read_listener;
 	private Object				read_attachment;
@@ -713,6 +713,8 @@ UTPTransportHelper
 		
 		return( "address=" + address + 
 				",incoming=" + incoming +
+				",closed=" + closed +
+				",con=" + (connection==null?null:"set" ) +
 				",trans=" + (trans==null?"null":("["+trans.getString()+"]"))
 				);
 				

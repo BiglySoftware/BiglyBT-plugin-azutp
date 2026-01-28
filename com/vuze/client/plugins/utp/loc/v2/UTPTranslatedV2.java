@@ -302,8 +302,9 @@ UTPTranslatedV2
 	public static final int UTP_RCVBUF					= 20;
 	public static final int UTP_TARGET_DELAY			= 21;
 	public static final int UTP_ON_CLOSE_REASON			= 22;
+	public static final int UTP_UDP_MTU_DEFAULT			= 23;
 
-	public static final int UTP_ARRAY_SIZE				= 23;	// must be last
+	public static final int UTP_ARRAY_SIZE				= 24;	// must be last
 	
 	//extern const char *utp_callback_names[];
 
@@ -550,9 +551,9 @@ UTPTranslatedV2
 		ctx.callbacks[UTP_ON_CLOSE_REASON].callback(args);
 	}
 
-	// utp_utils
+	// utp_utils	
 	
-	public static final int ETHERNET_MTU = 1500;
+	// public static final int ETHERNET_MTU = 1500;
 	public static final int IPV4_HEADER_SIZE = 20;
 	public static final int IPV6_HEADER_SIZE = 40;
 	public static final int UDP_HEADER_SIZE = 8;
@@ -568,11 +569,34 @@ UTPTranslatedV2
 	public static final int UDP_IPV4_OVERHEAD = (IPV4_HEADER_SIZE + UDP_HEADER_SIZE);
 	public static final int UDP_IPV6_OVERHEAD = (IPV6_HEADER_SIZE + UDP_HEADER_SIZE);
 	public static final int UDP_TEREDO_OVERHEAD = (UDP_IPV4_OVERHEAD + UDP_IPV6_OVERHEAD);
-
-	public static final int UDP_IPV4_MTU = (ETHERNET_MTU - IPV4_HEADER_SIZE - UDP_HEADER_SIZE - GRE_HEADER_SIZE - PPPOE_HEADER_SIZE - MPPE_HEADER_SIZE - FUDGE_HEADER_SIZE);
-	public static final int UDP_IPV6_MTU = (ETHERNET_MTU - IPV6_HEADER_SIZE - UDP_HEADER_SIZE - GRE_HEADER_SIZE - PPPOE_HEADER_SIZE - MPPE_HEADER_SIZE - FUDGE_HEADER_SIZE);
+	
+	//public static final int UDP_IPV4_MTU = (ETHERNET_MTU - IPV4_HEADER_SIZE - UDP_HEADER_SIZE - GRE_HEADER_SIZE - PPPOE_HEADER_SIZE - MPPE_HEADER_SIZE - FUDGE_HEADER_SIZE);
+	//public static final int UDP_IPV6_MTU = (ETHERNET_MTU - IPV6_HEADER_SIZE - UDP_HEADER_SIZE - GRE_HEADER_SIZE - PPPOE_HEADER_SIZE - MPPE_HEADER_SIZE - FUDGE_HEADER_SIZE);
 	public static final int UDP_TEREDO_MTU = (TEREDO_MTU - UDP_HEADER_SIZE);
 
+	public int ETHERNET_MTU;
+	public int UDP_IPV4_MTU;
+	public int UDP_IPV6_MTU;
+	
+	private void
+	setUDPMTUDefault(
+		int		def )
+	{
+		ETHERNET_MTU = def;
+		
+		UDP_IPV4_MTU = (def - IPV4_HEADER_SIZE - UDP_HEADER_SIZE - GRE_HEADER_SIZE - PPPOE_HEADER_SIZE - MPPE_HEADER_SIZE - FUDGE_HEADER_SIZE);
+		UDP_IPV6_MTU = (def - IPV6_HEADER_SIZE - UDP_HEADER_SIZE - GRE_HEADER_SIZE - PPPOE_HEADER_SIZE - MPPE_HEADER_SIZE - FUDGE_HEADER_SIZE);
+	}
+	
+	private int
+	getUDPMTUDefault()
+	{
+		return( ETHERNET_MTU );
+	}
+	
+	{
+		setUDPMTUDefault( 1500 );
+	}
 	
 	private final boolean TEST_MODE;
 	
@@ -3058,9 +3082,9 @@ UTPTranslatedV2
 			
 				if ( state == CS_SYN_SENT ){
 					if ((int)(ctx.current_ms - last_sent_packet) >= 2*KEEPALIVE_INTERVAL) {
-						if ( Constants.isCVSVersion()){
-							Debug.out( "Socket stuck in SYN_SENT, closing: " + getString());
-						}
+						//if ( Constants.isCVSVersion()){
+						//	Debug.out( "Socket stuck in SYN_SENT, closing: " + getString());
+						//}
 
 						if (close_requested)
 							state = CS_DESTROY;
@@ -5713,6 +5737,11 @@ UTPTranslatedV2
 		}else if ( po == UTPProvider.OPT_SEND_BUFFER ){
 			
 			return( UTP_SNDBUF );
+			
+		}else if ( po == UTPProvider.OPT_UDP_MTU_DEFAULT ){
+			
+			return( UTP_UDP_MTU_DEFAULT );
+			
 		}else{
 			
 			Debug.out( "derp" );
@@ -5728,31 +5757,38 @@ UTPTranslatedV2
 	{
 		int	option = convertOption( provider_option );
 		
-		boolean	is_buff_opt = option == UTP_SNDBUF || option == UTP_RCVBUF;
-		
-		if ( is_buff_opt ){
+		if ( option == UTP_UDP_MTU_DEFAULT ){
 			
-			value *= 1024;
-		}
-		
-		int	existing = utp_context_get_option( global_ctx, option );
-		
-		if ( existing == value ){
+			setUDPMTUDefault( value );
 			
-			return;
-		}
-		
-		utp_context_set_option( global_ctx, option, value );
-		
-		if ( is_buff_opt ){
+		}else{
 			
-			for ( UTPSocketKeyData data: global_ctx.utp_sockets.values()){
+			boolean	is_buff_opt = option == UTP_SNDBUF || option == UTP_RCVBUF;
+			
+			if ( is_buff_opt ){
 				
-				UTPSocketImpl socket = data.socket;
+				value *= 1024;
+			}
+			
+			int	existing = utp_context_get_option( global_ctx, option );
+			
+			if ( existing == value ){
 				
-				if ( utp_getsockopt(socket, option ) == existing ){
+				return;
+			}
+			
+			utp_context_set_option( global_ctx, option, value );
+			
+			if ( is_buff_opt ){
+				
+				for ( UTPSocketKeyData data: global_ctx.utp_sockets.values()){
 					
-					utp_setsockopt( socket, option , value );
+					UTPSocketImpl socket = data.socket;
+					
+					if ( utp_getsockopt(socket, option ) == existing ){
+						
+						utp_setsockopt( socket, option , value );
+					}
 				}
 			}
 		}
@@ -5764,14 +5800,20 @@ UTPTranslatedV2
 	{
 		int	option = convertOption( provider_option );
 		
-		int value = utp_context_get_option( global_ctx, option );
-		
-		if ( option == UTP_SNDBUF || option == UTP_RCVBUF ){
+		if ( option == UTP_UDP_MTU_DEFAULT ){
 			
-			value /= 1024;
+			return( getUDPMTUDefault());
+			
+		}else{
+			int value = utp_context_get_option( global_ctx, option );
+			
+			if ( option == UTP_SNDBUF || option == UTP_RCVBUF ){
+				
+				value /= 1024;
+			}
+			
+			return( value );
 		}
-		
-		return( value );
 	}
 	
 	public int

@@ -35,6 +35,7 @@ UTPProvider
 	
 	public static final int OPT_RECEIVE_BUFFER	= 1;
 	public static final int OPT_SEND_BUFFER		= 2;
+	public static final int OPT_UDP_MTU_DEFAULT	= 3;
 		
 	public boolean
 	load(

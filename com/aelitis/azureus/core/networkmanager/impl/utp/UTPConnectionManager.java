@@ -888,6 +888,16 @@ UTPConnectionManager
 		}
 	}
 	
+	public void
+	setUDPMTUDefault(
+		int		size )
+	{
+		for ( UTPConnectionProcessor processor: processors ){
+		
+			processor.setUDPMTUDefault(size);
+		}
+	}
+	
 	protected void
 	log(
 		String		str )

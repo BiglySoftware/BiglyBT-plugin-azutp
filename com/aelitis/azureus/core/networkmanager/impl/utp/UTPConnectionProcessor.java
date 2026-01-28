@@ -848,14 +848,45 @@ UTPConnectionProcessor
 	setReceiveBufferSize(
 		int		size )
 	{
-		utp_provider.setOption( UTPProvider.OPT_RECEIVE_BUFFER, size==0?DEFAULT_RECV_BUFFER_KB:size );
+		dispatch(
+			new DispatchTask( "setReceiveBufferSize" )
+			{
+				public void
+				runTask()
+				{
+					utp_provider.setOption( UTPProvider.OPT_RECEIVE_BUFFER, size==0?DEFAULT_RECV_BUFFER_KB:size );
+				}
+			});
 	}
 	
 	public void
 	setSendBufferSize(
 		int		size )
 	{
-		utp_provider.setOption( UTPProvider.OPT_SEND_BUFFER, size==0?DEFAULT_SEND_BUFFER_KB:size );
+		dispatch(
+			new DispatchTask( "setSendBufferSize" )
+			{
+				public void
+				runTask()
+				{
+					utp_provider.setOption( UTPProvider.OPT_SEND_BUFFER, size==0?DEFAULT_SEND_BUFFER_KB:size );
+				}
+			});
+	}
+	
+	public void
+	setUDPMTUDefault(
+		int		size )
+	{
+		dispatch(
+			new DispatchTask( "setUDPMTUDefault" )
+			{
+				public void
+				runTask()
+				{
+					utp_provider.setOption( UTPProvider.OPT_UDP_MTU_DEFAULT, size );
+				}
+			});
 	}
 	
 	protected void

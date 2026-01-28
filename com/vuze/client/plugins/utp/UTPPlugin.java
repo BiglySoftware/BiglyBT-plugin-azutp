@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import com.aelitis.azureus.core.networkmanager.impl.utp.UTPConnectionManager;
 import com.biglybt.core.config.COConfigurationManager;
+import com.biglybt.core.config.ConfigKeys;
 import com.biglybt.core.config.ParameterListener;
 import com.biglybt.core.util.Debug;
 import com.biglybt.net.udp.uc.PRUDPPacketHandler;
@@ -169,6 +170,12 @@ UTPPlugin
 		manager.setReceiveBufferSize( recv_buff_size.getValue());
 		manager.setSendBufferSize( send_buff_size.getValue());
 	
+		COConfigurationManager.addAndFireParameterListener(
+			ConfigKeys.Connection.ICFG_NETWORK_TCP_MTU_SIZE,
+			(n)->{
+				manager.setUDPMTUDefault( COConfigurationManager.getIntParameter(n));
+			});
+		
 		enabled_param.addEnabledOnSelection( recv_buff_size );
 		enabled_param.addEnabledOnSelection( send_buff_size );
 		
